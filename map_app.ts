@@ -141,6 +141,7 @@ export class MapApp extends LitElement {
   @state() showPoiMarkers = false;
   @state() poiLoading = false;
   @state() poiSearchRadius = 1500;
+  @state() poiCategoryFilter = 'all';
   @state() copiedBookmarkId = '';
   @state() editingBookmarkId = '';
   @state() editingBookmarkName = '';
@@ -149,7 +150,11 @@ export class MapApp extends LitElement {
   @state() autoSaveBookmarkDelay = 5;
   @state() activeBookmarkId = '';
   @state() selectedCategoryFilter = 'All';
+  @state() timelineFilterApplied = false;
   @state() timelineVisible = true;
+  @state() isTourActive = false;
+  @state() tourCurrentIndex = -1;
+  @state() tourIsLooping = true;
   @state() centerLat = 37.8199;
   @state() centerLng = -122.4783;
   @state() recentSearches: string[] = [];
@@ -917,8 +922,12 @@ To add your Google Maps API key:
     }
   }
 
-  flyTo(lat: number, lng: number, tilt: number, heading: number, range: number, bookmarkId?: string) {
+  flyTo(lat: number, lng: number, tilt: number, heading: number, range: number, bookmarkId?: string, fromTour = false) {
     if (!this.mapInitialized || !this.map) return;
+
+    if (!fromTour && this.isTourActive) {
+      this.stopTour();
+    }
 
     this.activeBookmarkId = bookmarkId || '';
 
@@ -1149,6 +1158,103 @@ To add your Google Maps API key:
     }
   }
 
+  toggleTimelineFilter() {
+    this.timelineFilterApplied = !this.timelineFilterApplied;
+  }
+
+  private tourTimeoutId?: any;
+
+  getTourBookmarks() {
+    let chronological = [...this.bookmarks].reverse();
+    const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
+    if (isFiltered) {
+      chronological = chronological.filter(
+        b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter
+      );
+    }
+    return chronological;
+  }
+
+  startTour() {
+    const list = this.getTourBookmarks();
+    if (list.length === 0) return;
+
+    this.isTourActive = true;
+    this.tourCurrentIndex = 0;
+    this.runTourStep();
+  }
+
+  stopTour() {
+    this.isTourActive = false;
+    this.tourCurrentIndex = -1;
+    if (this.tourTimeoutId) {
+      clearTimeout(this.tourTimeoutId);
+      this.tourTimeoutId = undefined;
+    }
+  }
+
+  runTourStep() {
+    if (!this.isTourActive) return;
+    const list = this.getTourBookmarks();
+    if (list.length === 0) {
+      this.stopTour();
+      return;
+    }
+
+    if (this.tourCurrentIndex < 0 || this.tourCurrentIndex >= list.length) {
+      if (this.tourIsLooping) {
+        this.tourCurrentIndex = 0;
+      } else {
+        this.stopTour();
+        return;
+      }
+    }
+
+    const b = list[this.tourCurrentIndex];
+    this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id, true);
+
+    const dwellDuration = 3500;
+    const stepDuration = this.flyDuration + dwellDuration;
+
+    this.tourTimeoutId = setTimeout(() => {
+      if (!this.isTourActive) return;
+      this.tourCurrentIndex++;
+      this.runTourStep();
+    }, stepDuration);
+    
+    this.requestUpdate();
+  }
+
+  nextTourStep() {
+    if (!this.isTourActive) return;
+    if (this.tourTimeoutId) clearTimeout(this.tourTimeoutId);
+    
+    const list = this.getTourBookmarks();
+    if (list.length === 0) {
+      this.stopTour();
+      return;
+    }
+    this.tourCurrentIndex = (this.tourCurrentIndex + 1) % list.length;
+    this.runTourStep();
+  }
+
+  prevTourStep() {
+    if (!this.isTourActive) return;
+    if (this.tourTimeoutId) clearTimeout(this.tourTimeoutId);
+    
+    const list = this.getTourBookmarks();
+    if (list.length === 0) {
+      this.stopTour();
+      return;
+    }
+    this.tourCurrentIndex = (this.tourCurrentIndex - 1 + list.length) % list.length;
+    this.runTourStep();
+  }
+
+  toggleTourLoop() {
+    this.tourIsLooping = !this.tourIsLooping;
+  }
+
   getCategoryEmoji(name: string): string {
     // Check if name has an emoji at the start
     const emojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
@@ -1180,7 +1286,14 @@ To add your Google Maps API key:
     if (this.bookmarks.length === 0) return '';
 
     // Show chronologically: oldest first, latest last
-    const chronologicalBookmarks = [...this.bookmarks].reverse();
+    let chronologicalBookmarks = [...this.bookmarks].reverse();
+
+    const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
+    if (isFiltered) {
+      chronologicalBookmarks = chronologicalBookmarks.filter(
+        b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter
+      );
+    }
 
     return html`
       <div class="map-timeline-island ${this.timelineVisible ? 'expanded' : 'collapsed'}">
@@ -1188,52 +1301,129 @@ To add your Google Maps API key:
           <div class="timeline-header-left">
             <span class="timeline-dot"></span>
             <span class="timeline-title">📍 Journey Route & Timeline</span>
-            <span class="timeline-count-badge">${this.bookmarks.length} nodes</span>
+            <span class="timeline-count-badge">
+              ${isFiltered 
+                ? `${chronologicalBookmarks.length}/${this.bookmarks.length} nodes` 
+                : `${this.bookmarks.length} nodes`}
+            </span>
           </div>
-          <button class="timeline-collapse-btn" @click=${this.toggleTimelineVisibility} title="${this.timelineVisible ? 'Collapse Timeline' : 'Expand Timeline'}">
-            ${this.timelineVisible ? html`
-              <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
-                <path d="M480-360 280-560h400L480-360Z"/>
-              </svg>
-            ` : html`
-              <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
-                <path d="m280-400 200-200 200 200H280Z"/>
-              </svg>
-            `}
-          </button>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <!-- Auto-Tour Play / Pause & Controls -->
+            <button 
+              class="timeline-filter-btn ${this.isTourActive ? 'active' : ''}"
+              @click=${this.isTourActive ? this.stopTour : this.startTour}
+              title="${this.isTourActive ? 'Stop Auto-Tour' : 'Start Auto-Tour of Timeline'}"
+              style="gap: 6px;">
+              ${this.isTourActive ? html`
+                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                  <path d="M320-640v320h80V-640h-80Zm240 0v320h80V-640h-80Z"/>
+                </svg>
+                <span>Stop Tour</span>
+              ` : html`
+                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                  <path d="M320-203v-554l440 277-440 277Zm80-277Zm0 144 229-144-229-144v288Z"/>
+                </svg>
+                <span>Play Tour</span>
+              `}
+            </button>
+
+            ${this.isTourActive ? html`
+              <div style="display: flex; align-items: center; gap: 4px; background-color: light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.05)); border-radius: 9999px; padding: 2px 6px; border: 1px dashed light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.1));">
+                <button 
+                  class="timeline-collapse-btn" 
+                  style="padding: 2px; border-radius: 999px;" 
+                  @click=${this.prevTourStep} 
+                  title="Previous Landmark">
+                  <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                    <path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z"/>
+                  </svg>
+                </button>
+                <span style="font-size: 0.7rem; font-weight: 600; color: var(--color-accent, #f59e0b); font-family: monospace; min-width: 32px; text-align: center;">
+                  ${this.tourCurrentIndex + 1}/${chronologicalBookmarks.length}
+                </span>
+                <button 
+                  class="timeline-collapse-btn" 
+                  style="padding: 2px; border-radius: 999px;" 
+                  @click=${this.nextTourStep} 
+                  title="Next Landmark">
+                  <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                    <path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z"/>
+                  </svg>
+                </button>
+                <button 
+                  class="timeline-collapse-btn ${this.tourIsLooping ? 'active' : ''}" 
+                  style="padding: 2px; border-radius: 999px; color: ${this.tourIsLooping ? 'var(--color-accent, #f59e0b)' : 'inherit'};" 
+                  @click=${this.toggleTourLoop} 
+                  title="${this.tourIsLooping ? 'Disable Loop' : 'Enable Loop'}">
+                  <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                    <path d="M160-200v-120q0-50 35-85t85-35h360l-80 80 56 56 176-176-176-176-56 56 80 80H280q-83 0-141.5 58.5T80 320v120h80Zm640-560v120q0 50-35 85t-85 35H360l80-80-56-56-176 176 176 176 56-56-80-80h280q83 0 141.5-58.5T880-640v-120h-80Z"/>
+                  </svg>
+                </button>
+              </div>
+            ` : ''}
+
+            ${this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort' ? html`
+              <button 
+                class="timeline-filter-btn ${this.timelineFilterApplied ? 'active' : ''}" 
+                @click=${this.toggleTimelineFilter}
+                title="${this.timelineFilterApplied ? 'Show All Bookmarks' : `Filter by current category: ${this.selectedCategoryFilter}`}">
+                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                  <path d="M440-160v-326L184-760h592L520-486v326h-80Z"/>
+                </svg>
+                <span>${this.timelineFilterApplied ? `Filtered` : 'Filter Category'}</span>
+              </button>
+            ` : ''}
+            <button class="timeline-collapse-btn" @click=${this.toggleTimelineVisibility} title="${this.timelineVisible ? 'Collapse Timeline' : 'Expand Timeline'}">
+              ${this.timelineVisible ? html`
+                <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+                  <path d="M480-360 280-560h400L480-360Z"/>
+                </svg>
+              ` : html`
+                <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+                  <path d="m280-400 200-200 200 200H280Z"/>
+                </svg>
+              `}
+            </button>
+          </div>
         </div>
 
         ${this.timelineVisible ? html`
-          <div class="timeline-track-container" @wheel=${this.handleTimelineWheel}>
-            <div class="timeline-connector-bar"></div>
-            <div class="timeline-nodes">
-              ${chronologicalBookmarks.map((b, index) => {
-                const isActive = this.activeBookmarkId === b.id;
-                const photoUrl = this.getBookmarkPhoto(b.name, b.id);
-                const categoryEmoji = this.getCategoryEmoji(b.name);
-                
-                return html`
-                  <div 
-                    class="timeline-node ${isActive ? 'active' : ''}" 
-                    @click=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}>
-                    <div class="timeline-node-dot ${isActive ? 'active' : ''}">
-                      <span class="timeline-node-index">${index + 1}</span>
-                    </div>
-                    <div class="timeline-node-card">
-                      <div class="timeline-node-thumb">
-                        <img src="${photoUrl}" alt="${b.name}" loading="lazy" />
-                        <span class="timeline-node-emoji-badge">${categoryEmoji}</span>
-                      </div>
-                      <div class="timeline-node-details">
-                        <span class="timeline-node-name" title="${b.name}">${b.name}</span>
-                        <span class="timeline-node-coords">${b.lat.toFixed(3)}°, ${b.lng.toFixed(3)}°</span>
-                      </div>
-                    </div>
-                  </div>
-                `;
-              })}
+          ${chronologicalBookmarks.length === 0 ? html`
+            <div style="padding: 24px; text-align: center; font-size: 0.75rem; color: var(--color-text3, #888); font-style: italic;">
+              No saved bookmarks match category "${this.selectedCategoryFilter}" on the timeline.
             </div>
-          </div>
+          ` : html`
+            <div class="timeline-track-container" @wheel=${this.handleTimelineWheel}>
+              <div class="timeline-connector-bar"></div>
+              <div class="timeline-nodes">
+                ${chronologicalBookmarks.map((b, index) => {
+                  const isActive = this.activeBookmarkId === b.id;
+                  const photoUrl = this.getBookmarkPhoto(b.name, b.id);
+                  const categoryEmoji = this.getCategoryEmoji(b.name);
+                  
+                  return html`
+                    <div 
+                      class="timeline-node ${isActive ? 'active' : ''}" 
+                      @click=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}>
+                      <div class="timeline-node-dot ${isActive ? 'active' : ''}">
+                        <span class="timeline-node-index">${index + 1}</span>
+                      </div>
+                      <div class="timeline-node-card">
+                        <div class="timeline-node-thumb">
+                          <img src="${photoUrl}" alt="${b.name}" loading="lazy" />
+                          <span class="timeline-node-emoji-badge">${categoryEmoji}</span>
+                        </div>
+                        <div class="timeline-node-details">
+                          <span class="timeline-node-name" title="${b.name}">${b.name}</span>
+                          <span class="timeline-node-coords">${b.lat.toFixed(3)}°, ${b.lng.toFixed(3)}°</span>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                })}
+              </div>
+            </div>
+          `}
         ` : ''}
       </div>
     `;
@@ -1269,6 +1459,13 @@ To add your Google Maps API key:
     }
   }
 
+  onPoiCategorySelect(category: string) {
+    this.poiCategoryFilter = category;
+    if (this.showPoiMarkers) {
+      this.fetchPoiForCenter();
+    }
+  }
+
   async fetchPoiForCenter() {
     if (!this.map || !this.showPoiMarkers) return;
     const center = this.map.center;
@@ -1291,12 +1488,26 @@ To add your Google Maps API key:
       if (google && google.maps) {
         const { Place } = await google.maps.importLibrary('places');
         
+        let includedTypes = ['tourist_attraction'];
+        let baseColor = { r: 245, g: 158, b: 11 }; // Default Golden
+
+        if (this.poiCategoryFilter === 'museums') {
+          includedTypes = ['museum'];
+          baseColor = { r: 14, g: 165, b: 233 }; // Sky Blue / Teal
+        } else if (this.poiCategoryFilter === 'parks') {
+          includedTypes = ['park', 'amusement_park', 'national_park'];
+          baseColor = { r: 16, g: 185, b: 129 }; // Emerald Green
+        } else if (this.poiCategoryFilter === 'religious') {
+          includedTypes = ['place_of_worship', 'church', 'hindu_temple', 'mosque', 'synagogue'];
+          baseColor = { r: 168, g: 85, b: 247 }; // Elegant Purple
+        }
+
         const response = await Place.searchNearby({
           locationRestriction: {
             center: { lat, lng },
             radius: this.poiSearchRadius,
           },
-          includedTypes: ['tourist_attraction'],
+          includedTypes,
           fields: ['displayName', 'location', 'formattedAddress']
         });
 
@@ -1314,11 +1525,11 @@ To add your Google Maps API key:
               
               marker.label = place.displayName || 'Attraction';
               marker.style = {
-                color: { r: 245, g: 158, b: 11, a: 1 } // Beautiful gold color
+                color: { r: baseColor.r, g: baseColor.g, b: baseColor.b, a: 1 }
               };
 
-              // Setup high-performance 3D hover/bounce interaction
-              this.setupMarkerHover(marker, pLat, pLng);
+              // Setup high-performance 3D hover/bounce interaction with dynamic base color
+              this.setupMarkerHover(marker, pLat, pLng, baseColor);
 
               (this.map as any).appendChild(marker);
               this.poiMarkers.push(marker);
@@ -1336,7 +1547,7 @@ To add your Google Maps API key:
     this.requestUpdate();
   }
 
-  setupMarkerHover(marker: any, pLat: number, pLng: number) {
+  setupMarkerHover(marker: any, pLat: number, pLng: number, baseColor = { r: 245, g: 158, b: 11 }) {
     // Set properties for relative altitude so we can lift/bounce the marker in 3D
     marker.altitudeMode = 'relative-to-ground';
     marker.extruded = true; // Beautiful link connecting marker to ground
@@ -1367,10 +1578,10 @@ To add your Google Maps API key:
         altitude: currentAltitude
       };
 
-      // Visually pulse the color brighter gold when bouncing
-      const r = Math.round(245 + bounce * 10);
-      const g = Math.round(158 + bounce * 39);
-      const b = Math.round(11 + bounce * 25);
+      // Visually pulse the color brighter when bouncing
+      const r = Math.round(baseColor.r + bounce * (Math.min(255, baseColor.r + 50) - baseColor.r));
+      const g = Math.round(baseColor.g + bounce * (Math.min(255, baseColor.g + 50) - baseColor.g));
+      const b = Math.round(baseColor.b + bounce * (Math.min(255, baseColor.b + 50) - baseColor.b));
       marker.style = {
         color: { r, g, b, a: 1 }
       };
@@ -1405,10 +1616,10 @@ To add your Google Maps API key:
           altitude: currentAltitude
         };
 
-        // Transition color back to base gold
-        const r = Math.round(245 + (1 - progress) * (((marker.style?.color?.r ?? 245)) - 245));
-        const g = Math.round(158 + (1 - progress) * (((marker.style?.color?.g ?? 158)) - 158));
-        const b = Math.round(11 + (1 - progress) * (((marker.style?.color?.b ?? 11)) - 11));
+        // Transition color back to base color
+        const r = Math.round(baseColor.r + (1 - progress) * (((marker.style?.color?.r ?? baseColor.r)) - baseColor.r));
+        const g = Math.round(baseColor.g + (1 - progress) * (((marker.style?.color?.g ?? baseColor.g)) - baseColor.g));
+        const b = Math.round(baseColor.b + (1 - progress) * (((marker.style?.color?.b ?? baseColor.b)) - baseColor.b));
         marker.style = {
           color: { r, g, b, a: 1 }
         };
@@ -2145,9 +2356,12 @@ To add your Google Maps API key:
     // If map error exists, don't render controls
     if (this.mapError) return html``;
 
-    const flightStatus = this.isOrbiting 
-      ? 'Orbiting Target' 
-      : (this.activeBookmarkId ? 'Scenic Flight' : 'Ready');
+    const tourBookmarks = this.getTourBookmarks();
+    const flightStatus = this.isTourActive
+      ? `Auto-Tour (${this.tourCurrentIndex + 1}/${tourBookmarks.length})`
+      : (this.isOrbiting 
+        ? 'Orbiting Target' 
+        : (this.activeBookmarkId ? 'Scenic Flight' : 'Ready'));
 
     const tiltLabel = this.mapTilt === 0 ? '2D Map View' : '3D Perspective';
 
@@ -2161,10 +2375,24 @@ To add your Google Maps API key:
               <span>3D Engine: Online</span>
             </div>
             <div class="map-hud-pill">
-              <span class="map-hud-pill-indicator ${this.isOrbiting ? 'busy' : 'active'}"></span>
+              <span class="map-hud-pill-indicator ${this.isTourActive ? 'busy pulsed' : (this.isOrbiting ? 'busy' : 'active')}"></span>
               <span>Status: ${flightStatus}</span>
             </div>
           </div>
+
+          ${this.isTourActive ? html`
+            <div class="map-hud-tour-banner">
+              <span class="tour-badge">TOUR MODE</span>
+              <span class="tour-location-name">
+                Visiting: <strong>${tourBookmarks[this.tourCurrentIndex]?.name || 'Next Destination'}</strong>
+              </span>
+              <button class="tour-hud-stop-btn" @click=${this.stopTour} title="Stop Tour">
+                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                  <path d="M240-240v-480h480v480H240Z"/>
+                </svg>
+              </button>
+            </div>
+          ` : ''}
         </div>
 
         <!-- Floating Controls Dock (centered right, independent) -->
@@ -2916,6 +3144,37 @@ To add your Google Maps API key:
                     <span>500m</span>
                     <span>2.5km</span>
                     <span>5km</span>
+                  </div>
+                </div>
+
+                <!-- POI Category Filter Segmented Group -->
+                <div style="margin-top: 14px; padding-left: 24px;">
+                  <span style="font-size: 0.8rem; color: var(--color-text2); display: block; margin-bottom: 6px;">Category Filter</span>
+                  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;">
+                    <button 
+                      class="poi-filter-btn ${this.poiCategoryFilter === 'all' ? 'active' : ''}"
+                      style="border-color: ${this.poiCategoryFilter === 'all' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'};"
+                      @click=${() => this.onPoiCategorySelect('all')}>
+                      🌟 All
+                    </button>
+                    <button 
+                      class="poi-filter-btn ${this.poiCategoryFilter === 'museums' ? 'active' : ''}"
+                      style="border-color: ${this.poiCategoryFilter === 'museums' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'};"
+                      @click=${() => this.onPoiCategorySelect('museums')}>
+                      🏛️ Museums
+                    </button>
+                    <button 
+                      class="poi-filter-btn ${this.poiCategoryFilter === 'parks' ? 'active' : ''}"
+                      style="border-color: ${this.poiCategoryFilter === 'parks' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'};"
+                      @click=${() => this.onPoiCategorySelect('parks')}>
+                      🌳 Parks
+                    </button>
+                    <button 
+                      class="poi-filter-btn ${this.poiCategoryFilter === 'religious' ? 'active' : ''}"
+                      style="border-color: ${this.poiCategoryFilter === 'religious' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'};"
+                      @click=${() => this.onPoiCategorySelect('religious')}>
+                      ⛪ Religious
+                    </button>
                   </div>
                 </div>
               ` : ''}

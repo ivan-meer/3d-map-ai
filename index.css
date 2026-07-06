@@ -968,6 +968,35 @@ code.hljs {
   color: var(--color-inv-text);
 }
 
+.poi-filter-btn {
+  background-color: var(--color-bg2);
+  color: var(--color-text2);
+  border: 1px solid var(--color-sidebar-border);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.poi-filter-btn:hover {
+  background-color: var(--color-bg3);
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.poi-filter-btn.active {
+  background-color: var(--color-accent);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+}
+
 /* Slider styling */
 .slider-header {
   display: flex;
@@ -2075,6 +2104,39 @@ code.hljs {
   transition: all 0.2s ease;
 }
 
+.timeline-filter-btn {
+  background-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.06));
+  color: var(--color-text-secondary, #888);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timeline-filter-btn:hover {
+  background-color: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.12));
+  color: var(--color-text);
+  border-color: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.2));
+}
+
+.timeline-filter-btn.active {
+  background-color: var(--color-accent, #f59e0b);
+  color: var(--color-accent-text, #000);
+  border-color: var(--color-accent, #f59e0b);
+}
+
+.timeline-filter-btn.active:hover {
+  filter: brightness(1.1);
+}
+
 .timeline-collapse-btn:hover {
   background-color: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.1));
   color: var(--color-text);
@@ -2259,6 +2321,108 @@ code.hljs {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 1px;
+}
+
+/* Auto-Tour Animations and Styles */
+.map-hud-top-bar {
+  gap: 12px;
+}
+
+.map-hud-tour-banner {
+  background-color: var(--color-accent, #f59e0b);
+  color: #000;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.4);
+  font-size: 0.72rem;
+  font-weight: 600;
+  pointer-events: auto;
+  animation: slideInDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards, tourPulse 2s infinite ease-in-out;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.tour-badge {
+  background-color: #000;
+  color: var(--color-accent, #f59e0b);
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tour-location-name {
+  color: #000;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tour-location-name strong {
+  font-weight: 700;
+}
+
+.tour-hud-stop-btn {
+  background: transparent;
+  border: none;
+  color: #000;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  margin-left: 2px;
+}
+
+.tour-hud-stop-btn:hover {
+  background-color: rgba(0, 0, 0, 0.15);
+  transform: scale(1.1);
+}
+
+.map-hud-pill-indicator.pulsed {
+  background-color: var(--color-accent, #f59e0b) !important;
+  animation: beaconPulse 1.5s infinite ease-in-out;
+}
+
+@keyframes slideInDown {
+  from {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes tourPulse {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 4px 28px rgba(245, 158, 11, 0.6);
+  }
+}
+
+@keyframes beaconPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.5;
+  }
 }
 
 

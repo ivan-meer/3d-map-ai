@@ -422,18 +422,30 @@ To add your Google Maps API key:
     let suggestions: string[] = [];
     const actions: Array<{ label: string; action: () => void }> = [];
 
+    const isBillingError = /billing/i.test(rawErrorMsg) || /REQUEST_DENIED/i.test(rawErrorMsg) || /Geocoding Service/i.test(rawErrorMsg);
+
     if (errorType === 'geocode') {
       const q = queries.location || '';
-      title = 'Location Search Failed';
-      summary = `We couldn't find the location **"${q}"** on the map.`;
+      if (isBillingError) {
+        title = 'Google Maps Billing Required';
+        summary = `The Google Maps Geocoding service is unavailable because billing is not enabled on your Google Cloud project. However, **we have successfully fallen back to OpenStreetMap (Nominatim)** to run your request!`;
+        suggestions = [
+          'Enable billing on your Google Cloud Console project by visiting: <a href="https://console.cloud.google.com/project/_/billing/enable" target="_blank" style="color: #38bdf8; text-decoration: underline;">Google Cloud Billing Enablement</a>',
+          'Ensure that the Geocoding API is active in your project settings: <a href="https://developers.google.com/maps/gmp-get-started" target="_blank" style="color: #38bdf8; text-decoration: underline;">Google Maps Get Started Guide</a>',
+          'Verify that your <code>GOOGLE_MAPS_PLATFORM_KEY</code> secret in AI Studio contains an active, valid API key with billing enabled.',
+          'Standard location queries will continue to run using our backup Nominatim geocoder seamlessly.'
+        ];
+      } else {
+        title = 'Location Search Failed';
+        summary = `We couldn't find the location **"${q}"** on the map.`;
+        suggestions = [
+          'Check for typos or spelling errors in your search query.',
+          'Be more specific: Try adding a city, state, postal code, or country (e.g., "Machu Picchu, Cusco, Peru" instead of just "Machu Picchu").',
+          'If you are entering coordinates, make sure they are in a clean <code>latitude, longitude</code> format (e.g., <code>37.7749, -122.4194</code>).',
+          'Ensure that the Geocoding API is enabled on your API key, and billing is active on your Google Cloud project if utilizing Google geocoding.'
+        ];
+      }
       
-      suggestions = [
-        'Check for typos or spelling errors in your search query.',
-        'Be more specific: Try adding a city, state, postal code, or country (e.g., "Machu Picchu, Cusco, Peru" instead of just "Machu Picchu").',
-        'If you are entering coordinates, make sure they are in a clean `latitude, longitude` format (e.g., `37.7749, -122.4194`).',
-        'Ensure that the Geocoding API is enabled on your API key, and billing is active on your Google Cloud project if utilizing Google geocoding.'
-      ];
-
       if (q) {
         // Suggest specific alternative actions based on query
         actions.push({
@@ -469,16 +481,27 @@ To add your Google Maps API key:
     } else if (errorType === 'directions') {
       const orig = queries.origin || '';
       const dest = queries.destination || '';
-      title = 'Directions Route Failed';
-      summary = `We couldn't compute route directions from **"${orig}"** to **"${dest}"**.`;
-
-      suggestions = [
-        'Ensure both the origin and destination addresses are spelled correctly.',
-        'Try being more specific by adding cities, postal codes, or countries to the addresses.',
-        'Verify that a road or transit path exists between these two locations (e.g., routing across oceans without ferry transit is not possible).',
-        'Double check your current travel mode (Drive vs. Walk vs. Transit).',
-        'Ensure that the Directions API or Routes API is enabled on your Google Cloud Console project.'
-      ];
+      
+      if (isBillingError) {
+        title = 'Google Routes API Billing Required';
+        summary = `The Google Maps Routes service is unavailable because billing is not enabled on your Google Cloud project. However, **we have successfully fallen back to a Scenic 3D Flight Arc** to map your path!`;
+        suggestions = [
+          'Enable billing on your Google Cloud Console project by visiting: <a href="https://console.cloud.google.com/project/_/billing/enable" target="_blank" style="color: #38bdf8; text-decoration: underline;">Google Cloud Billing Enablement</a>',
+          'Ensure that the Routes API is enabled on your API key: <a href="https://developers.google.com/maps/gmp-get-started" target="_blank" style="color: #38bdf8; text-decoration: underline;">Google Maps Get Started Guide</a>',
+          'Verify that your <code>GOOGLE_MAPS_PLATFORM_KEY</code> secret in AI Studio contains an active, valid API key with billing enabled.',
+          'Direct routes will continue to fall back to a scenic 3D flight path connecting geocoded origin and destination points.'
+        ];
+      } else {
+        title = 'Directions Route Failed';
+        summary = `We couldn't compute route directions from **"${orig}"** to **"${dest}"**.`;
+        suggestions = [
+          'Ensure both the origin and destination addresses are spelled correctly.',
+          'Try being more specific by adding cities, postal codes, or countries to the addresses.',
+          'Verify that a road or transit path exists between these two locations (e.g., routing across oceans without ferry transit is not possible).',
+          'Double check your current travel mode (Drive vs. Walk vs. Transit).',
+          'Ensure that the Directions API or Routes API is enabled on your Google Cloud Console project.'
+        ];
+      }
 
       if (orig && dest) {
         actions.push({
@@ -713,17 +736,89 @@ To add your Google Maps API key:
     );
   }
 
+  /**
+   * Defensive URL construction helper. Validates the base URL and query parameters.
+   * If construction fails, logs a diagnostic error and pushes a friendly notification.
+   */
+  private safeConstructURL(baseUrl: string, params: Record<string, string | number | undefined | null>): URL | null {
+    try {
+      if (!baseUrl || typeof baseUrl !== 'string' || !baseUrl.trim()) {
+        throw new Error('Base URL is undefined or empty');
+      }
+
+      let resolvedBase = baseUrl.trim();
+      if (!resolvedBase.startsWith('http://') && !resolvedBase.startsWith('https://')) {
+        try {
+          resolvedBase = new URL(resolvedBase, window.location.origin).toString();
+        } catch {
+          throw new Error(`Base URL "${baseUrl}" is not a valid absolute URL and could not be resolved against window.location.origin.`);
+        }
+      }
+
+      const url = new URL(resolvedBase);
+
+      for (const [key, val] of Object.entries(params)) {
+        if (val === undefined || val === null) {
+          console.warn(`[safeConstructURL] Parameter key "${key}" has undefined or null value. Skipping.`);
+          continue;
+        }
+        
+        const stringVal = String(val).trim();
+        if (key === 'latitude' || key === 'longitude' || key === 'lat' || key === 'lng' || key === 'lon') {
+          const num = Number(stringVal);
+          if (isNaN(num) || !isFinite(num)) {
+            throw new Error(`Coordinate parameter "${key}" contains an invalid numeric value: "${stringVal}"`);
+          }
+        }
+
+        url.searchParams.set(key, stringVal);
+      }
+
+      console.log(`[safeConstructURL] Successfully constructed validated URL: ${url.toString()}`);
+      return url;
+    } catch (err: any) {
+      const errMsg = `Failed to construct URL from base "${baseUrl}" with params: ${JSON.stringify(params)}. Error: ${err.message}`;
+      console.error(errMsg);
+      
+      this.addMessage('error', `
+        <div class="url-diagnostic-warning" style="
+          border-left: 4px solid #f59e0b;
+          background: rgba(45, 34, 18, 0.95);
+          border-radius: 4px 12px 12px 4px;
+          padding: 12px;
+          margin: 6px 0;
+          color: #fef3c7;
+          font-family: system-ui, sans-serif;
+          font-size: 0.85rem;
+          line-height: 1.4;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        ">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-weight: 700; color: #f59e0b;">
+            <span>⚠️</span> URL Construction Diagnostic Alert
+          </div>
+          <p style="margin: 0 0 6px 0;">An error occurred while generating a web link or coordinate API query:</p>
+          <code style="display: block; background: rgba(0,0,0,0.4); padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; color: #fca5a5;">${err.message}</code>
+          <p style="margin: 6px 0 0 0; font-size: 0.75rem; color: #d97706;">Recommended fix: Check input parameters, make sure coordinates are valid numbers and window location is properly initialized.</p>
+        </div>
+      `);
+      return null;
+    }
+  }
+
   private async _geocodeWithNominatim(address: string): Promise<any> {
     try {
       if (!address || typeof address !== 'string' || !address.trim()) {
         throw new Error('Invalid address query for Nominatim geocoding');
       }
 
-      const baseUrl = 'https://nominatim.openstreetmap.org/search';
-      const url = new URL(baseUrl);
-      url.searchParams.set('q', address.trim());
-      url.searchParams.set('format', 'json');
-      url.searchParams.set('limit', '1');
+      const url = this.safeConstructURL('https://nominatim.openstreetmap.org/search', {
+        q: address.trim(),
+        format: 'json',
+        limit: '1'
+      });
+      if (!url) {
+        throw new Error('URL construction failed for Nominatim geocoding');
+      }
 
       const response = await fetch(
         url.toString(),
@@ -764,11 +859,14 @@ To add your Google Maps API key:
         throw new Error('Invalid coordinates supplied for Nominatim reverse geocoding');
       }
 
-      const baseUrl = 'https://nominatim.openstreetmap.org/reverse';
-      const url = new URL(baseUrl);
-      url.searchParams.set('lat', latNum.toString());
-      url.searchParams.set('lon', lngNum.toString());
-      url.searchParams.set('format', 'json');
+      const url = this.safeConstructURL('https://nominatim.openstreetmap.org/reverse', {
+        lat: latNum.toString(),
+        lon: lngNum.toString(),
+        format: 'json'
+      });
+      if (!url) {
+        throw new Error('URL construction failed for Nominatim reverse geocoding');
+      }
 
       const response = await fetch(
         url.toString(),
@@ -2089,11 +2187,14 @@ To add your Google Maps API key:
     this.requestUpdate();
     
     try {
-      const baseUrl = 'https://api.open-meteo.com/v1/forecast';
-      const url = new URL(baseUrl);
-      url.searchParams.set('latitude', latNum.toFixed(4));
-      url.searchParams.set('longitude', lngNum.toFixed(4));
-      url.searchParams.set('current_weather', 'true');
+      const url = this.safeConstructURL('https://api.open-meteo.com/v1/forecast', {
+        latitude: latNum.toFixed(4),
+        longitude: lngNum.toFixed(4),
+        current_weather: 'true'
+      });
+      if (!url) {
+        throw new Error('URL construction failed for Open-Meteo weather API');
+      }
 
       const response = await fetch(url.toString());
       if (!response.ok) {
@@ -2569,12 +2670,17 @@ To add your Google Maps API key:
         throw new Error('window.location.href is invalid or not absolute');
       }
 
-      const url = new URL(baseHref);
-      url.searchParams.set('lat', latNum.toFixed(6));
-      url.searchParams.set('lng', lngNum.toFixed(6));
-      url.searchParams.set('tilt', isNaN(tiltNum) ? '0' : Math.round(tiltNum).toString());
-      url.searchParams.set('heading', isNaN(headingNum) ? '0' : Math.round(headingNum).toString());
-      url.searchParams.set('range', isNaN(rangeNum) ? '2000' : Math.round(rangeNum).toString());
+      const url = this.safeConstructURL(baseHref, {
+        lat: latNum.toFixed(6),
+        lng: lngNum.toFixed(6),
+        tilt: isNaN(tiltNum) ? '0' : Math.round(tiltNum).toString(),
+        heading: isNaN(headingNum) ? '0' : Math.round(headingNum).toString(),
+        range: isNaN(rangeNum) ? '2000' : Math.round(rangeNum).toString()
+      });
+
+      if (!url) {
+        throw new Error('URL construction failed for bookmark share link');
+      }
 
       const shareUrl = url.toString();
 

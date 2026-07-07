@@ -47,7 +47,7 @@ Tool Usage Guidelines:
 const ai = new GoogleGenAI({
   apiKey: 'PROXY_MODE', // Keep as dummy string, actual key appended securely on server/proxy
   httpOptions: {
-    baseUrl: '/api/proxy',
+    baseUrl: `${window.location.origin}/api/proxy/`,
   },
 });
 

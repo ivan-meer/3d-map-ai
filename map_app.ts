@@ -129,6 +129,11 @@ export class MapApp extends LitElement {
   @state() manualSearchQuery = '';
   @state() manualOrigin = '';
   @state() manualDestination = '';
+  @state() directionsTravelMode: 'DRIVING' | 'WALKING' | 'TRANSIT' = 'DRIVING';
+  @state() cameraFlightActive = false;
+  @state() cameraFlightProgress = 0;
+  @state() cameraFlightDestinationName = '';
+  private cameraFlightAnimId?: number;
   @state() isOrbiting = false;
   @state() showWeatherOverlay = false;
   @state() weatherData: any = null;
@@ -142,6 +147,7 @@ export class MapApp extends LitElement {
   @state() poiLoading = false;
   @state() poiSearchRadius = 1500;
   @state() poiCategoryFilter = 'all';
+  @state() poiCustomSearchQuery = '';
   @state() copiedBookmarkId = '';
   @state() editingBookmarkId = '';
   @state() editingBookmarkName = '';
@@ -406,6 +412,211 @@ To add your Google Maps API key:
     }
   }
 
+  private async renderFriendlyMapError(
+    errorType: 'geocode' | 'directions',
+    rawErrorMsg: string,
+    queries: { location?: string; origin?: string; destination?: string }
+  ) {
+    let title = 'Map Operation Failed';
+    let summary = '';
+    let suggestions: string[] = [];
+    const actions: Array<{ label: string; action: () => void }> = [];
+
+    if (errorType === 'geocode') {
+      const q = queries.location || '';
+      title = 'Location Search Failed';
+      summary = `We couldn't find the location **"${q}"** on the map.`;
+      
+      suggestions = [
+        'Check for typos or spelling errors in your search query.',
+        'Be more specific: Try adding a city, state, postal code, or country (e.g., "Machu Picchu, Cusco, Peru" instead of just "Machu Picchu").',
+        'If you are entering coordinates, make sure they are in a clean `latitude, longitude` format (e.g., `37.7749, -122.4194`).',
+        'Ensure that the Geocoding API is enabled on your API key, and billing is active on your Google Cloud project if utilizing Google geocoding.'
+      ];
+
+      if (q) {
+        // Suggest specific alternative actions based on query
+        actions.push({
+          label: `Try searching with Nominatim (OSM)`,
+          action: () => {
+            this._geocodeWithNominatim(q)
+              .then(loc => {
+                if (!this.map) return;
+                const cameraOptions = {
+                  center: {lat: loc.lat(), lng: loc.lng(), altitude: 0},
+                  heading: 0,
+                  tilt: 67.5,
+                  range: 2000,
+                };
+                this.startFlightAnimation(this.flyDuration, q);
+                (this.map as any).flyCameraTo({
+                  endCamera: cameraOptions,
+                  durationMillis: this.flyDuration,
+                });
+                if (this.Marker3DElement) {
+                  this.marker = new this.Marker3DElement();
+                  this.marker.position = {lat: loc.lat(), lng: loc.lng(), altitude: 0};
+                  this.marker.label = q;
+                  (this.map as any).appendChild(this.marker);
+                }
+              })
+              .catch(err => {
+                console.error('Nominatim fallback retry failed:', err);
+              });
+          }
+        });
+      }
+    } else if (errorType === 'directions') {
+      const orig = queries.origin || '';
+      const dest = queries.destination || '';
+      title = 'Directions Route Failed';
+      summary = `We couldn't compute route directions from **"${orig}"** to **"${dest}"**.`;
+
+      suggestions = [
+        'Ensure both the origin and destination addresses are spelled correctly.',
+        'Try being more specific by adding cities, postal codes, or countries to the addresses.',
+        'Verify that a road or transit path exists between these two locations (e.g., routing across oceans without ferry transit is not possible).',
+        'Double check your current travel mode (Drive vs. Walk vs. Transit).',
+        'Ensure that the Directions API or Routes API is enabled on your Google Cloud Console project.'
+      ];
+
+      if (orig && dest) {
+        actions.push({
+          label: `Render Scenic 3D Flight Arc`,
+          action: () => {
+            this._clearMapElements();
+            Promise.all([
+              this._geocodeAddress(orig).catch(() => this._geocodeWithNominatim(orig)),
+              this._geocodeAddress(dest).catch(() => this._geocodeWithNominatim(dest))
+            ]).then(([originLoc, destLoc]) => {
+              if (this.Marker3DElement && this.Polyline3DElement) {
+                const pathCoordinates = this._generateArcPath(originLoc, destLoc);
+                this.routePolyline = new this.Polyline3DElement();
+                this.routePolyline.coordinates = pathCoordinates;
+                this.routePolyline.strokeColor = 'cyan';
+                this.routePolyline.strokeWidth = 10;
+                (this.map as any).appendChild(this.routePolyline);
+
+                this.originMarker = new this.Marker3DElement();
+                this.originMarker.position = {lat: originLoc.lat(), lng: originLoc.lng(), altitude: 0};
+                this.originMarker.label = orig;
+                (this.map as any).appendChild(this.originMarker);
+
+                this.destinationMarker = new this.Marker3DElement();
+                this.destinationMarker.position = {lat: destLoc.lat(), lng: destLoc.lng(), altitude: 0};
+                this.destinationMarker.label = dest;
+                (this.map as any).appendChild(this.destinationMarker);
+
+                const midLat = (originLoc.lat() + destLoc.lat()) / 2;
+                const midLng = (originLoc.lng() + destLoc.lng()) / 2;
+                const dLat = destLoc.lat() - originLoc.lat();
+                const dLng = destLoc.lng() - originLoc.lng();
+                const approxDist = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
+                const range = Math.max(approxDist * 1.5, 2500);
+
+                const cameraOptions = {
+                  center: {lat: midLat, lng: midLng, altitude: 0},
+                  heading: 315,
+                  tilt: 55,
+                  range: range,
+                };
+                this.startFlightAnimation(this.flyDuration, `Scenic Path to ${dest}`);
+                (this.map as any).flyCameraTo({
+                  endCamera: cameraOptions,
+                  durationMillis: this.flyDuration,
+                });
+              }
+            }).catch(err => {
+              console.error('Scenic 3D fallback flight failed', err);
+            });
+          }
+        });
+      }
+    }
+
+    const { textElement } = this.addMessage('error', 'Processing error...');
+    
+    // Construct polished HTML template with error diagnostics
+    const cardHtml = `
+      <div class="friendly-error-card" style="
+        border-left: 4px solid #ef4444;
+        background: rgba(30, 27, 46, 0.95);
+        border-radius: 4px 12px 12px 4px;
+        padding: 16px;
+        margin: 8px 0;
+        color: #f1f5f9;
+        font-family: system-ui, sans-serif;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+      ">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+          <span style="color: #ef4444; font-size: 1.4rem; display: flex; align-items: center;">⚠️</span>
+          <h4 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em;">${title}</h4>
+        </div>
+        
+        <p style="margin: 0 0 12px 0; font-size: 0.9rem; line-height: 1.4; color: #cbd5e1;">
+          ${summary}
+        </p>
+
+        <div style="margin-bottom: 16px;">
+          <span style="font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; display: block; margin-bottom: 6px;">
+            Suggested Fixes:
+          </span>
+          <ul style="margin: 0; padding-left: 18px; font-size: 0.85rem; color: #cbd5e1; display: flex; flex-direction: column; gap: 4px; line-height: 1.4;">
+            ${suggestions.map(s => `<li>${s}</li>`).join('')}
+          </ul>
+        </div>
+
+        ${actions.length > 0 ? `
+          <div style="margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px;">
+            <span style="font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; width: 100%; display: block; margin-bottom: 4px;">
+              Quick Actions:
+            </span>
+            ${actions.map((act, idx) => `
+              <button class="friendly-error-btn" data-index="${idx}" style="
+                background: #0284c7;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 0.8rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.2s;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+              ">
+                ${act.label}
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+
+        <details style="margin-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 8px;">
+          <summary style="font-size: 0.75rem; color: #94a3b8; cursor: pointer; user-select: none;">
+            Technical Error Diagnostics
+          </summary>
+          <pre style="margin: 6px 0 0 0; font-family: monospace; font-size: 0.75rem; color: #ef4444; background: rgba(0, 0, 0, 0.3); padding: 8px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">${rawErrorMsg}</pre>
+        </details>
+      </div>
+    `;
+
+    textElement.innerHTML = cardHtml;
+
+    setTimeout(() => {
+      const btns = textElement.querySelectorAll('.friendly-error-btn');
+      btns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const index = parseInt((e.currentTarget as HTMLButtonElement).getAttribute('data-index') || '0', 10);
+          const act = actions[index];
+          if (act) {
+            act.action();
+          }
+        });
+      });
+    }, 100);
+  }
+
   /**
    * Google Maps: Handles viewing a specific location on the map.
    * It uses the Geocoding service to find coordinates for the `locationQuery`,
@@ -416,7 +627,6 @@ To add your Google Maps API key:
     if (
       !this.mapInitialized ||
       !this.map ||
-      !this.geocoder ||
       !this.Marker3DElement
     ) {
       if (!this.mapError) {
@@ -426,11 +636,59 @@ To add your Google Maps API key:
         );
       }
       console.warn(
-        'Map not initialized, geocoder or Marker3DElement not available, cannot render query.',
+        'Map not initialized, or Marker3DElement not available, cannot render query.',
       );
       return;
     }
     this._clearMapElements(); // Google Maps: Clear previous elements.
+
+    const handleLocationResult = async (location: any) => {
+      if (!this.map) return;
+
+      // Google Maps: Define camera options and fly to the location.
+      const cameraOptions = {
+        center: {lat: location.lat(), lng: location.lng(), altitude: 0},
+        heading: 0,
+        tilt: 67.5,
+        range: 2000, // Distance from the target in meters
+      };
+      
+      // Update settings slider states to match
+      this.mapHeading = 0;
+      this.mapTilt = 67.5;
+      this.mapRange = 2000;
+
+      this.startFlightAnimation(this.flyDuration, locationQuery);
+      (this.map as any).flyCameraTo({
+        endCamera: cameraOptions,
+        durationMillis: this.flyDuration,
+      });
+
+      // Google Maps: Create and add a 3D marker to the map.
+      this.marker = new this.Marker3DElement();
+      this.marker.position = {
+        lat: location.lat(),
+        lng: location.lng(),
+        altitude: 0,
+      };
+      const label =
+        locationQuery.length > 30
+          ? locationQuery.substring(0, 27) + '...'
+          : locationQuery;
+      this.marker.label = label;
+      (this.map as any).appendChild(this.marker);
+    };
+
+    if (!this.geocoder) {
+      console.warn('Google Geocoder is not initialized. Using Nominatim fallback.');
+      try {
+        const fallbackLocation = await this._geocodeWithNominatim(locationQuery);
+        await handleLocationResult(fallbackLocation);
+      } catch (err: any) {
+        await this.renderFriendlyMapError('geocode', `Google Geocoder is not available. Nominatim fallback failed: ${err.message}`, { location: locationQuery });
+      }
+      return;
+    }
 
     // Google Maps: Use Geocoding service to find the location.
     this.geocoder.geocode(
@@ -438,48 +696,100 @@ To add your Google Maps API key:
       async (results: any, status: string) => {
         if (status === 'OK' && results && results[0] && this.map) {
           const location = results[0].geometry.location;
-
-          // Google Maps: Define camera options and fly to the location.
-          const cameraOptions = {
-            center: {lat: location.lat(), lng: location.lng(), altitude: 0},
-            heading: 0,
-            tilt: 67.5,
-            range: 2000, // Distance from the target in meters
-          };
-          
-          // Update settings slider states to match
-          this.mapHeading = 0;
-          this.mapTilt = 67.5;
-          this.mapRange = 2000;
-
-          (this.map as any).flyCameraTo({
-            endCamera: cameraOptions,
-            durationMillis: this.flyDuration,
-          });
-
-          // Google Maps: Create and add a 3D marker to the map.
-          this.marker = new this.Marker3DElement();
-          this.marker.position = {
-            lat: location.lat(),
-            lng: location.lng(),
-            altitude: 0,
-          };
-          const label =
-            locationQuery.length > 30
-              ? locationQuery.substring(0, 27) + '...'
-              : locationQuery;
-          this.marker.label = label;
-          (this.map as any).appendChild(this.marker);
+          await handleLocationResult(location);
         } else {
-          console.error(
-            `Geocode was not successful for "${locationQuery}". Reason: ${status}`,
-          );
-          const rawErrorMessage = `Could not find location: ${locationQuery}. Reason: ${status}`;
-          const {textElement} = this.addMessage('error', 'Processing error...');
-          textElement.innerHTML = await marked.parse(rawErrorMessage);
+          console.warn(`Google geocoding failed with status: ${status}. Falling back to Nominatim.`);
+          try {
+            const fallbackLocation = await this._geocodeWithNominatim(locationQuery);
+            await handleLocationResult(fallbackLocation);
+          } catch (err: any) {
+            console.error(
+              `Geocode was not successful for "${locationQuery}". Reason: ${status}`,
+            );
+            await this.renderFriendlyMapError('geocode', `Google geocoding failed with status: ${status}. Nominatim fallback failed: ${err.message}`, { location: locationQuery });
+          }
         }
       },
     );
+  }
+
+  private async _geocodeWithNominatim(address: string): Promise<any> {
+    try {
+      if (!address || typeof address !== 'string' || !address.trim()) {
+        throw new Error('Invalid address query for Nominatim geocoding');
+      }
+
+      const baseUrl = 'https://nominatim.openstreetmap.org/search';
+      const url = new URL(baseUrl);
+      url.searchParams.set('q', address.trim());
+      url.searchParams.set('format', 'json');
+      url.searchParams.set('limit', '1');
+
+      const response = await fetch(
+        url.toString(),
+        {
+          headers: {
+            'User-Agent': 'AI-Studio-Map-App/1.0',
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Nominatim HTTP error: ${response.status}`);
+      }
+      const data = await response.json();
+      if (data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        if (isNaN(lat) || isNaN(lng)) {
+          throw new Error('Nominatim returned invalid coordinate formats');
+        }
+        return {
+          lat: () => lat,
+          lng: () => lng,
+          toString: () => `${lat},${lng}`,
+        };
+      }
+      throw new Error('No results found via Nominatim');
+    } catch (err) {
+      console.error('Nominatim geocode failed:', err);
+      throw err;
+    }
+  }
+
+  private async _reverseGeocodeWithNominatim(lat: number, lng: number): Promise<string> {
+    try {
+      const latNum = Number(lat);
+      const lngNum = Number(lng);
+      if (isNaN(latNum) || !isFinite(latNum) || isNaN(lngNum) || !isFinite(lngNum)) {
+        throw new Error('Invalid coordinates supplied for Nominatim reverse geocoding');
+      }
+
+      const baseUrl = 'https://nominatim.openstreetmap.org/reverse';
+      const url = new URL(baseUrl);
+      url.searchParams.set('lat', latNum.toString());
+      url.searchParams.set('lon', lngNum.toString());
+      url.searchParams.set('format', 'json');
+
+      const response = await fetch(
+        url.toString(),
+        {
+          headers: {
+            'User-Agent': 'AI-Studio-Map-App/1.0',
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Nominatim HTTP error: ${response.status}`);
+      }
+      const data = await response.json();
+      if (data && data.display_name) {
+        return data.display_name;
+      }
+      throw new Error('No address found');
+    } catch (err) {
+      console.error('Nominatim reverse geocode failed:', err);
+      throw err;
+    }
   }
 
   /**
@@ -488,14 +798,19 @@ To add your Google Maps API key:
   private _geocodeAddress(address: string): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.geocoder) {
-        reject(new Error('Geocoder not initialized'));
+        this._geocodeWithNominatim(address)
+          .then(resolve)
+          .catch(() => reject(new Error('Geocoder not initialized and Nominatim failed')));
         return;
       }
       this.geocoder.geocode({address}, (results: any, status: string) => {
         if (status === 'OK' && results && results[0]) {
           resolve(results[0].geometry.location);
         } else {
-          reject(new Error(`Geocode failed with status: ${status}`));
+          console.warn(`Google geocoding failed with status: ${status}. Falling back to Nominatim.`);
+          this._geocodeWithNominatim(address)
+            .then(resolve)
+            .catch((err) => reject(new Error(`Geocode failed with status: ${status} and fallback failed: ${err.message}`)));
         }
       });
     });
@@ -547,6 +862,7 @@ To add your Google Maps API key:
   private async _handleDirections(
     originQuery: string,
     destinationQuery: string,
+    mode?: 'DRIVING' | 'WALKING' | 'TRANSIT',
   ) {
     if (
       !this.mapInitialized ||
@@ -568,6 +884,8 @@ To add your Google Maps API key:
     }
     this._clearMapElements(); // Google Maps: Clear previous elements.
 
+    const travelMode = mode || this.directionsTravelMode || 'DRIVING';
+
     // Google Maps: Use modern Routes API to get the route.
     try {
       const google = (window as any).google;
@@ -580,7 +898,7 @@ To add your Google Maps API key:
       const response = await Route.computeRoutes({
         origin: originQuery,
         destination: destinationQuery,
-        travelMode: 'DRIVING',
+        travelMode: travelMode as any,
         fields: ['path', 'legs.startLocation', 'legs.endLocation', 'viewport'],
       });
 
@@ -596,7 +914,13 @@ To add your Google Maps API key:
           })); // Add slight altitude
           this.routePolyline = new this.Polyline3DElement();
           this.routePolyline.coordinates = pathCoordinates;
-          this.routePolyline.strokeColor = 'blue';
+          let strokeColor = 'blue';
+          if (travelMode === 'WALKING') {
+            strokeColor = '#10b981';
+          } else if (travelMode === 'TRANSIT') {
+            strokeColor = '#a855f7';
+          }
+          this.routePolyline.strokeColor = strokeColor;
           this.routePolyline.strokeWidth = 10;
           (this.map as any).appendChild(this.routePolyline);
         }
@@ -685,6 +1009,7 @@ To add your Google Maps API key:
           this.mapTilt = 45;
           this.mapRange = Math.round(range);
 
+          this.startFlightAnimation(this.flyDuration, `Route to ${destinationQuery}`);
           (this.map as any).flyCameraTo({
             endCamera: cameraOptions,
             durationMillis: this.flyDuration,
@@ -772,6 +1097,7 @@ To add your Google Maps API key:
               this.mapTilt = 55;
               this.mapRange = Math.round(range);
 
+              this.startFlightAnimation(this.flyDuration, `Scenic Path to ${destinationQuery}`);
               (this.map as any).flyCameraTo({
                 endCamera: cameraOptions,
                 durationMillis: this.flyDuration,
@@ -783,9 +1109,7 @@ To add your Google Maps API key:
             }
           } catch (err: any) {
             console.error('Fallback geocoding or path rendering failed:', err);
-            const rawErrorMessage = `Could not get directions from "${originQuery}" to "${destinationQuery}". Reason: ${routeError.message || routeError}. Fallback flight path also failed: ${err.message}`;
-            const {textElement} = this.addMessage('error', 'Processing error...');
-            textElement.innerHTML = await marked.parse(rawErrorMessage);
+            await this.renderFriendlyMapError('directions', `Routes API failed with: ${routeError.message || routeError}. Fallback scenic geocoding flight path also failed: ${err.message}`, { origin: originQuery, destination: destinationQuery });
           }
     }
   }
@@ -922,6 +1246,37 @@ To add your Google Maps API key:
     }
   }
 
+  startFlightAnimation(duration: number, destination: string) {
+    if (this.cameraFlightAnimId !== undefined) {
+      cancelAnimationFrame(this.cameraFlightAnimId);
+      this.cameraFlightAnimId = undefined;
+    }
+
+    this.cameraFlightActive = true;
+    this.cameraFlightProgress = 0;
+    this.cameraFlightDestinationName = destination || 'Selected Location';
+
+    const startTime = performance.now();
+
+    const animate = (time: number) => {
+      const elapsed = time - startTime;
+      const progress = Math.min((elapsed / duration) * 100, 100);
+      this.cameraFlightProgress = progress;
+
+      if (progress < 100) {
+        this.cameraFlightAnimId = requestAnimationFrame(animate);
+      } else {
+        setTimeout(() => {
+          this.cameraFlightActive = false;
+          this.requestUpdate();
+        }, 400);
+      }
+      this.requestUpdate();
+    };
+
+    this.cameraFlightAnimId = requestAnimationFrame(animate);
+  }
+
   flyTo(lat: number, lng: number, tilt: number, heading: number, range: number, bookmarkId?: string, fromTour = false) {
     if (!this.mapInitialized || !this.map) return;
 
@@ -953,6 +1308,16 @@ To add your Google Maps API key:
     this.mapTilt = tilt;
     this.mapRange = range;
     
+    let destName = '';
+    if (bookmarkId) {
+      const b = this.bookmarks.find(x => x.id === bookmarkId);
+      if (b) destName = b.name;
+    }
+    if (!destName) {
+      destName = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+    }
+    this.startFlightAnimation(this.flyDuration, destName);
+
     (this.map as any).flyCameraTo({
       endCamera: cameraOptions,
       durationMillis: this.flyDuration,
@@ -1099,15 +1464,28 @@ To add your Google Maps API key:
               const address = results[0].formatted_address;
               resolve(address.split(',')[0] || `Auto-saved View`);
             } else {
-              resolve(`Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`);
+              console.warn('Google reverse geocoding failed. Falling back to Nominatim.');
+              this._reverseGeocodeWithNominatim(lat, lng)
+                .then((addr) => resolve(addr.split(',')[0] || `Auto-saved View`))
+                .catch(() => resolve(`Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`));
             }
           });
         });
       } catch {
-        name = `Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        try {
+          const addr = await this._reverseGeocodeWithNominatim(lat, lng);
+          name = addr.split(',')[0] || `Auto-saved View`;
+        } catch {
+          name = `Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        }
       }
     } else {
-      name = `Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+      try {
+        const addr = await this._reverseGeocodeWithNominatim(lat, lng);
+        name = addr.split(',')[0] || `Auto-saved View`;
+      } catch {
+        name = `Auto-saved View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+      }
     }
 
     const newBookmark = {
@@ -1255,7 +1633,7 @@ To add your Google Maps API key:
     this.tourIsLooping = !this.tourIsLooping;
   }
 
-  getCategoryEmoji(name: string): string {
+  getBookmarkEmoji(name: string): string {
     // Check if name has an emoji at the start
     const emojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
     const match = name.match(emojiRegex);
@@ -1265,13 +1643,7 @@ To add your Google Maps API key:
     
     // Otherwise determine based on category
     const cat = this.getBookmarkCategory(name);
-    switch (cat) {
-      case 'Landmarks': return '🏛️';
-      case 'Nature': return '🏞️';
-      case 'Cities': return '🏙️';
-      case 'Coastlines': return '🏖️';
-      default: return '📍';
-    }
+    return this.getCategoryEmoji(cat);
   }
 
   handleTimelineWheel(e: WheelEvent) {
@@ -1399,7 +1771,7 @@ To add your Google Maps API key:
                 ${chronologicalBookmarks.map((b, index) => {
                   const isActive = this.activeBookmarkId === b.id;
                   const photoUrl = this.getBookmarkPhoto(b.name, b.id);
-                  const categoryEmoji = this.getCategoryEmoji(b.name);
+                  const categoryEmoji = this.getBookmarkEmoji(b.name);
                   
                   return html`
                     <div 
@@ -1460,7 +1832,24 @@ To add your Google Maps API key:
   }
 
   onPoiCategorySelect(category: string) {
+    this.poiCustomSearchQuery = '';
     this.poiCategoryFilter = category;
+    if (this.showPoiMarkers) {
+      this.fetchPoiForCenter();
+    }
+  }
+
+  onPoiCustomSearch(query: string) {
+    this.poiCustomSearchQuery = query;
+    this.poiCategoryFilter = query ? 'custom' : 'all';
+    if (this.showPoiMarkers) {
+      this.fetchPoiForCenter();
+    }
+  }
+
+  clearPoiCustomSearch() {
+    this.poiCustomSearchQuery = '';
+    this.poiCategoryFilter = 'all';
     if (this.showPoiMarkers) {
       this.fetchPoiForCenter();
     }
@@ -1488,28 +1877,43 @@ To add your Google Maps API key:
       if (google && google.maps) {
         const { Place } = await google.maps.importLibrary('places');
         
-        let includedTypes = ['tourist_attraction'];
+        let response;
         let baseColor = { r: 245, g: 158, b: 11 }; // Default Golden
 
-        if (this.poiCategoryFilter === 'museums') {
-          includedTypes = ['museum'];
-          baseColor = { r: 14, g: 165, b: 233 }; // Sky Blue / Teal
-        } else if (this.poiCategoryFilter === 'parks') {
-          includedTypes = ['park', 'amusement_park', 'national_park'];
-          baseColor = { r: 16, g: 185, b: 129 }; // Emerald Green
-        } else if (this.poiCategoryFilter === 'religious') {
-          includedTypes = ['place_of_worship', 'church', 'hindu_temple', 'mosque', 'synagogue'];
-          baseColor = { r: 168, g: 85, b: 247 }; // Elegant Purple
-        }
+        if (this.poiCustomSearchQuery && this.poiCustomSearchQuery.trim()) {
+          baseColor = { r: 244, g: 63, b: 94 }; // Vibrant Coral/Rose for custom search results
+          response = await Place.searchByText({
+            textQuery: this.poiCustomSearchQuery,
+            fields: ['displayName', 'location', 'formattedAddress'],
+            locationBias: {
+              center: { lat, lng },
+              radius: this.poiSearchRadius,
+            },
+            maxResultCount: 20
+          });
+        } else {
+          let includedTypes = ['tourist_attraction'];
 
-        const response = await Place.searchNearby({
-          locationRestriction: {
-            center: { lat, lng },
-            radius: this.poiSearchRadius,
-          },
-          includedTypes,
-          fields: ['displayName', 'location', 'formattedAddress']
-        });
+          if (this.poiCategoryFilter === 'museums') {
+            includedTypes = ['museum'];
+            baseColor = { r: 14, g: 165, b: 233 }; // Sky Blue / Teal
+          } else if (this.poiCategoryFilter === 'parks') {
+            includedTypes = ['park', 'amusement_park', 'national_park'];
+            baseColor = { r: 16, g: 185, b: 129 }; // Emerald Green
+          } else if (this.poiCategoryFilter === 'religious') {
+            includedTypes = ['place_of_worship', 'church', 'hindu_temple', 'mosque', 'synagogue'];
+            baseColor = { r: 168, g: 85, b: 247 }; // Elegant Purple
+          }
+
+          response = await Place.searchNearby({
+            locationRestriction: {
+              center: { lat, lng },
+              radius: this.poiSearchRadius,
+            },
+            includedTypes,
+            fields: ['displayName', 'location', 'formattedAddress']
+          });
+        }
 
         this.poiLoading = false;
         
@@ -1672,8 +2076,11 @@ To add your Google Maps API key:
     const lat = typeof center.lat === 'function' ? center.lat() : (center.lat ?? center.latitude);
     const lng = typeof center.lng === 'function' ? center.lng() : (center.lng ?? center.longitude);
     
-    if (lat === undefined || lat === null || lng === undefined || lng === null) {
-      this.weatherError = 'Could not retrieve map center coordinates.';
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    
+    if (isNaN(latNum) || !isFinite(latNum) || isNaN(lngNum) || !isFinite(lngNum)) {
+      this.weatherError = 'Invalid map center coordinates for weather forecast.';
       return;
     }
 
@@ -1682,8 +2089,13 @@ To add your Google Maps API key:
     this.requestUpdate();
     
     try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&current_weather=true`;
-      const response = await fetch(url);
+      const baseUrl = 'https://api.open-meteo.com/v1/forecast';
+      const url = new URL(baseUrl);
+      url.searchParams.set('latitude', latNum.toFixed(4));
+      url.searchParams.set('longitude', lngNum.toFixed(4));
+      url.searchParams.set('current_weather', 'true');
+
+      const response = await fetch(url.toString());
       if (!response.ok) {
         throw new Error(`Weather API returned status: ${response.status}`);
       }
@@ -1914,15 +2326,28 @@ To add your Google Maps API key:
                 // Use the first segment of address (usually neighborhood/poi/street name)
                 resolve(address.split(',')[0] || `View Point`);
               } else {
-                resolve(`View (${lat.toFixed(3)}, ${lng.toFixed(3)})`);
+                console.warn('Google reverse geocoding failed. Falling back to Nominatim.');
+                this._reverseGeocodeWithNominatim(lat, lng)
+                  .then((addr) => resolve(addr.split(',')[0] || `View Point`))
+                  .catch(() => resolve(`View (${lat.toFixed(3)}, ${lng.toFixed(3)})`));
               }
             });
           });
         } catch {
-          name = `View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+          try {
+            const addr = await this._reverseGeocodeWithNominatim(lat, lng);
+            name = addr.split(',')[0] || `View Point`;
+          } catch {
+            name = `View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+          }
         }
       } else {
-        name = `View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        try {
+          const addr = await this._reverseGeocodeWithNominatim(lat, lng);
+          name = addr.split(',')[0] || `View Point`;
+        } catch {
+          name = `View (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        }
       }
     }
 
@@ -2115,32 +2540,59 @@ To add your Google Maps API key:
       case 'Cities': return '🏙️';
       case 'Mountains': return '🏔️';
       case 'Landmarks': return '🏛️';
+      case 'Nature': return '🏞️';
+      case 'Coastlines': return '🏖️';
       default: return '📍';
     }
   }
 
   shareBookmark(b: {id: string, name: string, lat: number, lng: number, tilt: number, heading: number, range: number}) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('lat', b.lat.toString());
-    url.searchParams.set('lng', b.lng.toString());
-    url.searchParams.set('tilt', b.tilt.toString());
-    url.searchParams.set('heading', b.heading.toString());
-    url.searchParams.set('range', b.range.toString());
+    // 1. Coordinate and input parameter validation
+    const latNum = Number(b.lat);
+    const lngNum = Number(b.lng);
+    const tiltNum = Number(b.tilt);
+    const headingNum = Number(b.heading);
+    const rangeNum = Number(b.range);
 
-    const shareUrl = url.toString();
+    if (
+      isNaN(latNum) || !isFinite(latNum) ||
+      isNaN(lngNum) || !isFinite(lngNum)
+    ) {
+      console.error('Invalid coordinates in bookmark share request:', b);
+      return;
+    }
 
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      this.copiedBookmarkId = b.id;
-      this.requestUpdate();
-      setTimeout(() => {
-        if (this.copiedBookmarkId === b.id) {
-          this.copiedBookmarkId = '';
-          this.requestUpdate();
-        }
-      }, 2000);
-    }).catch(err => {
-      console.error('Could not copy text: ', err);
-    });
+    try {
+      // 2. Safe URL construction with validation of location href
+      const baseHref = window.location.href;
+      if (!baseHref || typeof baseHref !== 'string' || !baseHref.startsWith('http')) {
+        throw new Error('window.location.href is invalid or not absolute');
+      }
+
+      const url = new URL(baseHref);
+      url.searchParams.set('lat', latNum.toFixed(6));
+      url.searchParams.set('lng', lngNum.toFixed(6));
+      url.searchParams.set('tilt', isNaN(tiltNum) ? '0' : Math.round(tiltNum).toString());
+      url.searchParams.set('heading', isNaN(headingNum) ? '0' : Math.round(headingNum).toString());
+      url.searchParams.set('range', isNaN(rangeNum) ? '2000' : Math.round(rangeNum).toString());
+
+      const shareUrl = url.toString();
+
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        this.copiedBookmarkId = b.id;
+        this.requestUpdate();
+        setTimeout(() => {
+          if (this.copiedBookmarkId === b.id) {
+            this.copiedBookmarkId = '';
+            this.requestUpdate();
+          }
+        }, 2000);
+      }).catch(err => {
+        console.error('Could not copy text: ', err);
+      });
+    } catch (urlErr) {
+      console.error('Failed to construct share URL safely:', urlErr);
+    }
   }
 
   startEditingBookmark(id: string, currentName: string) {
@@ -2191,6 +2643,13 @@ To add your Google Maps API key:
 
   onManualDirections(e: Event) {
     e.preventDefault();
+    if (this.manualOrigin.trim() && this.manualDestination.trim()) {
+      this._handleDirections(this.manualOrigin.trim(), this.manualDestination.trim());
+    }
+  }
+
+  setDirectionsTravelMode(mode: 'DRIVING' | 'WALKING' | 'TRANSIT') {
+    this.directionsTravelMode = mode;
     if (this.manualOrigin.trim() && this.manualDestination.trim()) {
       this._handleDirections(this.manualOrigin.trim(), this.manualDestination.trim());
     }
@@ -2288,6 +2747,19 @@ To add your Google Maps API key:
   addRecentSearch(query: string) {
     if (!query || !query.trim()) return;
     const cleanQuery = query.trim();
+
+    // Validation: check for URL-like strings or invalid characters
+    const isUrl = /^(https?:\/\/|www\.)|(\.[a-zA-Z]{2,}\/)/i.test(cleanQuery) || /^[a-zA-Z0-9+.-]+:\/\//.test(cleanQuery);
+    const hasHtml = /<[^>]*>/i.test(cleanQuery);
+    const hasControlChars = /[\x00-\x1F\x7F-\x9F]/.test(cleanQuery);
+    const tooLong = cleanQuery.length > 150; // safe limit for queries
+    const isJunkSymbols = /([%#$`^&*+={}[\]|<>~_@])\1{2,}/.test(cleanQuery); // 3+ repeated weird symbols
+
+    if (isUrl || hasHtml || hasControlChars || tooLong || isJunkSymbols) {
+      console.warn('Recent search query failed validation. Skipping save to localStorage:', cleanQuery);
+      return;
+    }
+
     let updated = this.recentSearches.filter(q => q.toLowerCase() !== cleanQuery.toLowerCase());
     updated.unshift(cleanQuery);
     if (updated.length > 5) {
@@ -2394,6 +2866,56 @@ To add your Google Maps API key:
             </div>
           ` : ''}
         </div>
+
+        <!-- Flight progress indicator -->
+        ${this.cameraFlightActive ? html`
+          <div class="map-hud-flight-banner-container" style="
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            z-index: 100;
+            pointer-events: auto;
+          ">
+            <div class="map-hud-flight-banner" style="
+              display: flex;
+              flex-direction: column;
+              gap: 6px;
+              background: rgba(15, 23, 42, 0.85);
+              backdrop-filter: blur(12px);
+              border: 1px solid rgba(255, 255, 255, 0.15);
+              border-radius: 12px;
+              padding: 10px 16px;
+              width: 320px;
+              box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+              animation: slideInDown 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            ">
+              <div style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="map-hud-pill-indicator busy pulsed" style="background-color: var(--color-accent, #0284c7);"></span>
+                  <span style="font-size: 0.8rem; font-weight: 700; color: #f8fafc; letter-spacing: 0.05em; text-transform: uppercase;">
+                    3D Camera Flight
+                  </span>
+                </div>
+                <span style="font-family: monospace; font-size: 0.8rem; color: #38bdf8; font-weight: 700;">
+                  ${Math.round(this.cameraFlightProgress)}%
+                </span>
+              </div>
+              <div style="font-size: 0.85rem; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px;">
+                <span>To:</span>
+                <strong style="color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${this.cameraFlightDestinationName}</strong>
+              </div>
+              <div style="width: 100%; height: 5px; background: rgba(255, 255, 255, 0.1); border-radius: 9999px; overflow: hidden; margin-top: 4px;">
+                <div style="
+                  height: 100%;
+                  width: ${this.cameraFlightProgress}%;
+                  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%);
+                  border-radius: 9999px;
+                  transition: width 0.08s linear;
+                "></div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
 
         <!-- Floating Controls Dock (centered right, independent) -->
         <div class="map-hud-controls-dock">
@@ -2687,6 +3209,41 @@ To add your Google Maps API key:
                   placeholder="Start from (e.g. Tokyo Tower)..."
                   .value=${this.manualOrigin}
                   @input=${this.onManualOriginInput} />
+
+                <!-- Travel Mode Selector -->
+                <div style="display: flex; gap: 6px; margin: 4px 0 10px 0;">
+                  <button 
+                    type="button"
+                    @click=${() => this.setDirectionsTravelMode('DRIVING')}
+                    style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; border-radius: 6px; border: 1px solid ${this.directionsTravelMode === 'DRIVING' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'}; background: ${this.directionsTravelMode === 'DRIVING' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)'}; color: ${this.directionsTravelMode === 'DRIVING' ? 'var(--color-accent)' : 'var(--color-text2)'}; cursor: pointer; transition: all 0.2s;"
+                    title="Driving Mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                      <path d="M240-160q-33 0-56.5-23.5T160-240v-320q0-33 23.5-56.5T240-640h480q33 0 56.5 23.5T800-560v320q0 33-23.5 56.5T720-160v40q0 17-11.5 28.5T680-80h-40q-17 0-28.5-11.5T600-120v-40H360v40q0 17-11.5 28.5T308-80h-40q-17 0-28.5-11.5T228-120v-40ZM240-560v160h480V-560H240Zm80 200q17 0 28.5-11.5T360-400q0-17-11.5-28.5T320-440q-17 0-28.5 11.5T280-400q0 17 11.5 28.5T320-360Zm320 0q17 0 28.5-11.5T680-400q0-17-11.5-28.5T640-440q-17 0-28.5 11.5T600-400q0 17 11.5 28.5T640-360Z"/>
+                    </svg>
+                    <span style="font-size: 0.75rem; font-weight: 600;">Drive</span>
+                  </button>
+                  <button 
+                    type="button"
+                    @click=${() => this.setDirectionsTravelMode('WALKING')}
+                    style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; border-radius: 6px; border: 1px solid ${this.directionsTravelMode === 'WALKING' ? '#10b981' : 'var(--color-sidebar-border)'}; background: ${this.directionsTravelMode === 'WALKING' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.03)'}; color: ${this.directionsTravelMode === 'WALKING' ? '#10b981' : 'var(--color-text2)'}; cursor: pointer; transition: all 0.2s;"
+                    title="Walking Mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                      <path d="M480-680q33 0 56.5-23.5T560-760q0-33-23.5-56.5T480-840q-33 0-56.5 23.5T400-760q0 33 23.5 56.5T480-680ZM368-293l-48-239q-5-28 12-49.5t48-21.5q21 0 37.5 12.5T438-560l22 108q31 35 73.5 54.5T620-378v80q-54 0-98-25t-68-69l-14-72-48 240H220v-80h148Zm194-43q17 56 61.5 86T720-220v80q-73 0-130-39.5T502-286l-14-64-14 72H400l-4-22 36-180-64-32v-44q0-10 10-10h114q16 0 29 8t17 22l34 170Z"/>
+                    </svg>
+                    <span style="font-size: 0.75rem; font-weight: 600;">Walk</span>
+                  </button>
+                  <button 
+                    type="button"
+                    @click=${() => this.setDirectionsTravelMode('TRANSIT')}
+                    style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; border-radius: 6px; border: 1px solid ${this.directionsTravelMode === 'TRANSIT' ? '#a855f7' : 'var(--color-sidebar-border)'}; background: ${this.directionsTravelMode === 'TRANSIT' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255, 255, 255, 0.03)'}; color: ${this.directionsTravelMode === 'TRANSIT' ? '#a855f7' : 'var(--color-text2)'}; cursor: pointer; transition: all 0.2s;"
+                    title="Transit Mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                      <path d="M280-80q-33 0-56.5-23.5T200-160v-40q0-17 11.5-28.5T240-240v-480q0-50 35-85t85-35h240q50 0 85 35t35 85v480q17 0 28.5 11.5T760-200v40q0 17-11.5 28.5T720-80h-40q-17 0-28.5-11.5T640-120v-40H320v40q0 17-11.5 28.5T280-80Zm80-640h240v-120H360v120Zm0 200h240v-120H360v120Zm0 240q17 0 28.5-11.5T400-320q0-17-11.5-28.5T360-360q-17 0-28.5 11.5T320-320q0 17 11.5 28.5T360-280Zm240 0q17 0 28.5-11.5T640-320q0-17-11.5-28.5T600-360q-17 0-28.5 11.5T560-320q0 17 11.5 28.5T600-280Z"/>
+                    </svg>
+                    <span style="font-size: 0.75rem; font-weight: 600;">Transit</span>
+                  </button>
+                </div>
+
                 <div class="settings-input-group">
                   <input
                     type="text"
@@ -3174,6 +3731,55 @@ To add your Google Maps API key:
                       style="border-color: ${this.poiCategoryFilter === 'religious' ? 'var(--color-accent)' : 'var(--color-sidebar-border)'};"
                       @click=${() => this.onPoiCategorySelect('religious')}>
                       ⛪ Religious
+                    </button>
+                  </div>
+                </div>
+
+                <!-- POI Custom Search Input -->
+                <div style="margin-top: 14px; padding-left: 24px;">
+                  <span style="font-size: 0.8rem; color: var(--color-text2); display: block; margin-bottom: 6px;">Custom Search Query</span>
+                  <div class="settings-input-group">
+                    <div style="position: relative; flex: 1; display: flex; align-items: center;">
+                      <input 
+                        type="text" 
+                        class="settings-input"
+                        style="width: 100%; padding-right: 32px;"
+                        placeholder="e.g. coffee shop, beach, library" 
+                        .value=${this.poiCustomSearchQuery}
+                        @keydown=${(e: KeyboardEvent) => {
+                          if (e.key === 'Enter') {
+                            const val = (e.target as HTMLInputElement).value;
+                            this.onPoiCustomSearch(val);
+                          }
+                        }}
+                      />
+                      ${this.poiCustomSearchQuery ? html`
+                        <button 
+                          @click=${this.clearPoiCustomSearch}
+                          style="position: absolute; right: 8px; background: transparent; border: none; color: var(--color-text3); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 2px;"
+                          title="Clear search">
+                          <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                            <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+                          </svg>
+                        </button>
+                      ` : html`
+                        <span style="position: absolute; right: 10px; color: var(--color-text3); pointer-events: none; display: flex; align-items: center;">
+                          <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                            <path d="M784-120 533-371q-30 24-74 37.5T368-320q-115 0-195.5-80.5T92-596q0-115 80.5-195.5T368-872q115 0 195.5 80.5T644-596q0 45-13.5 89T593-433l251 251-60 62ZM368-400q80 0 136-56t56-136q0-80-56-136t-136-56q-80 0-136 56t-56 136q0 80 56 136t136 56Z"/>
+                          </svg>
+                        </span>
+                      `}
+                    </div>
+                    <button 
+                      class="settings-button"
+                      style="flex-shrink: 0;"
+                      @click=${(e: Event) => {
+                        const inputEl = (e.currentTarget as HTMLElement).previousElementSibling?.querySelector('input') as HTMLInputElement;
+                        if (inputEl) {
+                          this.onPoiCustomSearch(inputEl.value);
+                        }
+                      }}>
+                      Search
                     </button>
                   </div>
                 </div>

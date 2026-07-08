@@ -22,7 +22,7 @@
 import {Loader} from '@googlemaps/js-api-loader';
 import hljs from 'highlight.js';
 import {html, LitElement, PropertyValueMap} from 'lit';
-import {customElement, query, state} from 'lit/decorators.js';
+import {customElement, query, state, property} from 'lit/decorators.js';
 import {classMap} from 'lit/directives/class-map.js';
 import {Marked} from 'marked';
 import {markedHighlight} from 'marked-highlight';
@@ -104,6 +104,439 @@ const EXAMPLE_PROMPTS = [
 ];
 
 /**
+ * Custom web component for rendering bookmark cards.
+ */
+@customElement('bookmark-card')
+export class BookmarkCard extends LitElement {
+  @property({ type: Object }) bookmark: any = null;
+  @property({ type: Boolean }) isActive = false;
+  @property({ type: Boolean }) isEditing = false;
+  @property({ type: String }) editingName = '';
+  @property({ type: Boolean }) isNewlyAdded = false;
+  @property({ type: Boolean }) isLoadingPhoto = false;
+  @property({ type: String }) category = '';
+  @property({ type: String }) emoji = '';
+  @property({ type: Number }) index = 0;
+
+  createRenderRoot() {
+    return this; // Light DOM so existing theme styling applies automatically
+  }
+
+  getPhotoSrc(): string {
+    const b = this.bookmark;
+    if (b && b.photoUrl) {
+      return b.photoUrl;
+    }
+    const name = (b && b.name) || '';
+    const lowerName = name.toLowerCase();
+    
+    const photos: Record<string, string> = {
+      grand_canyon: 'https://images.unsplash.com/photo-1615551043360-33de8b5f410c?auto=format&fit=crop&w=150&h=150&q=80',
+      eiffel: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=150&h=150&q=80',
+      everest: 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=150&h=150&q=80',
+      venice: 'https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&w=150&h=150&q=80',
+      machu: 'https://images.unsplash.com/photo-1587595431973-160d0d94adb1?auto=format&fit=crop&w=150&h=150&q=80',
+      tokyo: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=150&h=150&q=80',
+      new_york: 'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?auto=format&fit=crop&w=150&h=150&q=80',
+    };
+
+    for (const [key, url] of Object.entries(photos)) {
+      if (lowerName.includes(key.replace('_', ' '))) {
+        return url;
+      }
+    }
+    return 'https://images.unsplash.com/photo-1524661135-423995f22d0b?auto=format&fit=crop&w=150&h=150&q=80';
+  }
+
+  render() {
+    const b = this.bookmark;
+    if (!b) return html``;
+    const category = this.category;
+    const emoji = this.emoji;
+
+    return html`
+      ${this.isEditing ? html`
+        <div class="bookmark-item-editing-form" style="width: 100%; display: flex; gap: 4px; align-items: center;">
+          <input 
+            type="text" 
+            class="bookmark-edit-input" 
+            style="flex: 1; min-width: 0;"
+            .value=${this.editingName} 
+            @input=${(e: any) => {
+              this.editingName = e.target.value;
+              this.dispatchEvent(new CustomEvent('name-input', { detail: { value: e.target.value } }));
+            }}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === 'Enter') {
+                this.dispatchEvent(new CustomEvent('save-edit', { detail: { id: b.id, name: this.editingName } }));
+              }
+              if (e.key === 'Escape') {
+                this.dispatchEvent(new CustomEvent('cancel-edit'));
+              }
+            }}
+            @click=${(e: Event) => e.stopPropagation()}
+            autofocus
+          />
+          <button class="bookmark-edit-save-btn" title="Save changes" @click=${(e: Event) => {
+            e.stopPropagation();
+            this.dispatchEvent(new CustomEvent('save-edit', { detail: { id: b.id, name: this.editingName } }));
+          }}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+              <path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/>
+            </svg>
+          </button>
+          <button class="bookmark-edit-cancel-btn" title="Cancel" @click=${(e: Event) => {
+            e.stopPropagation();
+            this.dispatchEvent(new CustomEvent('cancel-edit'));
+          }}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+              <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+            </svg>
+          </button>
+        </div>
+      ` : html`
+        <div class="bookmark-drag-handle" title="Drag to reorder" @mousedown=${(e: Event) => e.stopPropagation()}>
+          <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+            <path d="M360-240q-25 0-42.5-17.5T300-300q0-25 17.5-42.5T360-360q25 0 42.5 17.5T420-300q0-25-17.5-42.5T360-240Zm240 0q-25 0-42.5-17.5T500-300q0-25 17.5-42.5T600-360q25 0 42.5 17.5T660-300q0-25-17.5-42.5T600-240Zm-240-180q-25 0-42.5-17.5T300-480q0-25 17.5-42.5T360-540q25 0 42.5 17.5T420-480q0-25-17.5-42.5T360-420Zm240 0q-25 0-42.5-17.5T500-480q0-25 17.5-42.5T600-540q25 0 42.5 17.5T660-480q0-25-17.5-42.5T600-420Zm-240-180q-25 0-42.5-17.5T300-660q0-25 17.5-42.5T360-720q25 0 42.5 17.5T420-660q0-25-17.5-42.5T360-600Zm240 0q-25 0-42.5-17.5T500-660q0-25 17.5-42.5T600-720q25 0 42.5 17.5T660-660q0-25-17.5-42.5T600-600Z"/>
+          </svg>
+        </div>
+        <div class="bookmark-item-image-wrapper" @click=${() => this.dispatchEvent(new CustomEvent('fly-to', { detail: { id: b.id } }))}>
+          <img class="bookmark-item-image" src="${this.getPhotoSrc()}" alt="${b.name}" loading="lazy" />
+          <div class="bookmark-item-category-icon ${category.toLowerCase()}" title="${category}">
+            ${emoji}
+          </div>
+          <div class="bookmark-item-image-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" height="10px" viewBox="0 -960 960 960" width="10px" fill="currentColor">
+              <path d="M120-160v-640l760 320-760 320Zm80-120 474-200-474-200v134l240 66-240 66v134Z"/>
+            </svg>
+            FLY
+          </div>
+        </div>
+        <div class="bookmark-item-clickable" @click=${() => this.dispatchEvent(new CustomEvent('fly-to', { detail: { id: b.id } }))}>
+          <span class="bookmark-item-name" title="${b.name}">${b.name}</span>
+          <span class="bookmark-item-coordinates">
+            <span class="coordinate-badge">lat: ${b.lat.toFixed(4)}°</span>
+            <span class="coordinate-badge">lng: ${b.lng.toFixed(4)}°</span>
+            <span class="category-badge ${category.toLowerCase()}">${emoji} ${category}</span>
+          </span>
+          <span class="bookmark-item-meta-details">
+            Tilt: ${b.tilt}° · Head: ${b.heading}° · ${Math.round(b.range)}m
+          </span>
+        </div>
+        <div class="bookmark-item-actions">
+          <button 
+            class="bookmark-action-btn edit-btn"
+            title="Rename bookmark"
+            aria-label="Rename bookmark"
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this.dispatchEvent(new CustomEvent('start-edit', { detail: { id: b.id, name: b.name } }));
+            }}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+              <path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/>
+            </svg>
+          </button>
+          <button 
+            class="bookmark-action-btn share-btn" 
+            title="Copy Shareable Link"
+            aria-label="Share bookmark" 
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this.dispatchEvent(new CustomEvent('share', { detail: { bookmark: b } }));
+            }}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+              <path d="M720-80q-50 0-85-35t-35-85q0-7 1-14.5t3-13.5L322-392q-17 15-38 23.5t-44 8.5q-50 0-85-35t-35-85q0-50 35-85t85-35q23 0 44 8.5t38 23.5l279-164q-2-6-3-13.5t-1-14.5q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35q-23 0-44-8.5T638-568L359-404q2 6 3 13.5t1 14.5q0 7-1 14.5t-3 13.5l279 164q17-15 38-23.5t44-8.5q50 0 85 35t35 85q0 50-35 85t-85 35Zm0-560q17 0 28.5-11.5T760-680q0-17-11.5-28.5T720-720q-17 0-28.5 11.5T680-680q0 17 11.5 28.5T720-640ZM240-440q17 0 28.5-11.5T280-480q0-17-11.5-28.5T240-520q-17 0-28.5 11.5T200-480q0 17 11.5 28.5T240-440Zm480 280q17 0 28.5-11.5T760-200q0-17-11.5-28.5T720-240q-17 0-28.5 11.5T680-200q0 17 11.5 28.5T720-160Z"/>
+            </svg>
+          </button>
+          <button 
+            class="bookmark-action-btn photo-btn ${this.isLoadingPhoto ? 'loading' : ''}" 
+            title="Fetch/Refresh real-world Place Photo"
+            aria-label="Fetch photo" 
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this.dispatchEvent(new CustomEvent('fetch-photo', { detail: { id: b.id } }));
+            }}
+            ?disabled=${this.isLoadingPhoto}>
+            ${this.isLoadingPhoto ? html`
+              <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q24 0 47.5 4t43.5 12l-64 64q-13-4-27-6t-27-2q-100 0-170 70t-70 170q0 100 70 170t170 70q100 0 170-70t70-170q0-14-2-27.5t-6-26.5l64-64q14 26 21 54t7 58q0 134-93 227T480-160Z"/>
+              </svg>
+            ` : html`
+              <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+                <path d="M720-640H580l-60-80H280v560h440V-640Zm0-80q33 0 56.5 23.5T800-640v480q0 33-23.5 56.5T720-80H280q-33 0-56.5-23.5T200-160v-560q0-33 23.5-56.5T280-800h160l60 80h220ZM360-320h240l-70-100-50 70-40-50-80 80ZM280-720v560-560Z"/>
+              </svg>
+            `}
+          </button>
+          <button 
+            class="bookmark-action-btn delete-btn" 
+            aria-label="Delete bookmark" 
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this.dispatchEvent(new CustomEvent('delete', { detail: { id: b.id } }));
+            }}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+              <path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v500h400v-500ZM360-220h80v-380h-80v380Zm160 0h80v-380h-80v380ZM280-720v500-500Z"/>
+            </svg>
+          </button>
+        </div>
+      `}
+    `;
+  }
+}
+
+/**
+ * Custom web component for rendering the weather overlay card.
+ */
+@customElement('weather-overlay-card')
+export class WeatherOverlayCard extends LitElement {
+  @property({ type: Object }) weatherData: any = null;
+  @property({ type: Boolean }) weatherLoading = false;
+  @property({ type: String }) weatherError = '';
+  @property({ type: String }) weatherUnit = 'C';
+  @property({ type: Boolean }) showWeatherForecast = false;
+
+  createRenderRoot() {
+    return this; // Light DOM for styling integration
+  }
+
+  getWeatherInfo(code: number): { label: string; icon: string; bgClass: string } {
+    const weatherMap: Record<number, { label: string; icon: string; bgClass: string }> = {
+      0: { label: 'Clear Sky', icon: '☀️', bgClass: 'weather-clear' },
+      1: { label: 'Mainly Clear', icon: '🌤️', bgClass: 'weather-clear' },
+      2: { label: 'Partly Cloudy', icon: '⛅', bgClass: 'weather-cloudy' },
+      3: { label: 'Overcast', icon: '☁️', bgClass: 'weather-cloudy' },
+      45: { label: 'Foggy', icon: '🌫️', bgClass: 'weather-fog' },
+      48: { label: 'Depositing Rime Fog', icon: '🌫️', bgClass: 'weather-fog' },
+      51: { label: 'Light Drizzle', icon: '🌧️', bgClass: 'weather-rainy' },
+      53: { label: 'Moderate Drizzle', icon: '🌧️', bgClass: 'weather-rainy' },
+      55: { label: 'Dense Drizzle', icon: '🌧️', bgClass: 'weather-rainy' },
+      56: { label: 'Light Freezing Drizzle', icon: '🌧️❄️', bgClass: 'weather-rainy' },
+      57: { label: 'Dense Freezing Drizzle', icon: '🌧️❄️', bgClass: 'weather-rainy' },
+      61: { label: 'Slight Rain', icon: '🌧️', bgClass: 'weather-rainy' },
+      63: { label: 'Moderate Rain', icon: '🌧️', bgClass: 'weather-rainy' },
+      65: { label: 'Heavy Rain', icon: '🌧️', bgClass: 'weather-rainy' },
+      66: { label: 'Light Freezing Rain', icon: '🌧️❄️', bgClass: 'weather-rainy' },
+      67: { label: 'Heavy Freezing Rain', icon: '🌧️❄️', bgClass: 'weather-rainy' },
+      71: { label: 'Slight Snowfall', icon: '❄️', bgClass: 'weather-snowy' },
+      73: { label: 'Moderate Snowfall', icon: '❄️', bgClass: 'weather-snowy' },
+      75: { label: 'Heavy Snowfall', icon: '❄️', bgClass: 'weather-snowy' },
+      77: { label: 'Snow Grains', icon: '❄️', bgClass: 'weather-snowy' },
+      80: { label: 'Slight Rain Showers', icon: '🌦️', bgClass: 'weather-rainy' },
+      81: { label: 'Moderate Rain Showers', icon: '🌦️', bgClass: 'weather-rainy' },
+      82: { label: 'Violent Rain Showers', icon: '🌦️', bgClass: 'weather-rainy' },
+      85: { label: 'Slight Snow Showers', icon: '❄️🌦️', bgClass: 'weather-snowy' },
+      86: { label: 'Heavy Snow Showers', icon: '❄️🌦️', bgClass: 'weather-snowy' },
+      95: { label: 'Thunderstorm', icon: '⛈️', bgClass: 'weather-stormy' },
+      96: { label: 'Thunderstorm with Slight Hail', icon: '⛈️🌨️', bgClass: 'weather-stormy' },
+      99: { label: 'Thunderstorm with Heavy Hail', icon: '⛈️🌨️', bgClass: 'weather-stormy' },
+    };
+    return weatherMap[code] || { label: 'Unknown', icon: '🌡️', bgClass: 'weather-unknown' };
+  }
+
+  renderWeatherEffects(bgClass: string) {
+    switch (bgClass) {
+      case 'weather-clear':
+        return html`<div class="weather-effect-clear-flare"></div>`;
+      case 'weather-cloudy':
+        return html`
+          <div class="weather-effect-cloud cloud-1"></div>
+          <div class="weather-effect-cloud cloud-2"></div>
+        `;
+      case 'weather-rainy':
+        return html`
+          <div class="weather-effect-rain-drop drop-1"></div>
+          <div class="weather-effect-rain-drop drop-2"></div>
+          <div class="weather-effect-rain-drop drop-3"></div>
+          <div class="weather-effect-rain-drop drop-4"></div>
+          <div class="weather-effect-rain-drop drop-5"></div>
+        `;
+      case 'weather-snowy':
+        return html`
+          <div class="weather-effect-snow-flake flake-1">❄</div>
+          <div class="weather-effect-snow-flake flake-2">❄</div>
+          <div class="weather-effect-snow-flake flake-3">❄</div>
+          <div class="weather-effect-snow-flake flake-4">❄</div>
+          <div class="weather-effect-snow-flake flake-5">❄</div>
+        `;
+      case 'weather-stormy':
+        return html`
+          <div class="weather-effect-lightning-flash"></div>
+          <div class="weather-effect-rain-drop drop-1"></div>
+          <div class="weather-effect-rain-drop drop-2"></div>
+          <div class="weather-effect-rain-drop drop-3"></div>
+          <div class="weather-effect-rain-drop drop-4"></div>
+        `;
+      case 'weather-fog':
+        return html`
+          <div class="weather-effect-fog-mist mist-1"></div>
+          <div class="weather-effect-fog-mist mist-2"></div>
+        `;
+      default:
+        return html``;
+    }
+  }
+
+  render() {
+    if (this.weatherLoading) {
+      return html`
+        <div class="weather-overlay-card">
+          <div class="weather-loading">
+            <svg class="animate-spin" style="width: 20px; height: 20px; margin-right: 8px; display: inline-block; vertical-align: middle;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" style="opacity: 0.25;"></circle>
+              <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" style="opacity: 0.75;"></path>
+            </svg>
+            <span>Fetching weather...</span>
+          </div>
+        </div>
+      `;
+    }
+
+    if (this.weatherError) {
+      return html`
+        <div class="weather-overlay-card weather-error-card">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="color: #ef4444; font-size: 1.2rem;">⚠️</span>
+            <div>
+              <div style="font-weight: 600; font-size: 0.85rem;">Weather Error</div>
+              <div style="font-size: 0.75rem; opacity: 0.8;">${this.weatherError}</div>
+            </div>
+          </div>
+          <button class="weather-retry-btn" @click=${() => this.dispatchEvent(new CustomEvent('retry-weather'))}>Retry</button>
+        </div>
+      `;
+    }
+
+    if (!this.weatherData) {
+      return html``;
+    }
+
+    const { temperature, windspeed, weathercode, lat, lng, forecast } = this.weatherData;
+    const weatherInfo = this.getWeatherInfo(weathercode);
+    const displayTemp = this.weatherUnit === 'F'
+      ? `${((temperature * 9 / 5) + 32).toFixed(1)}°F`
+      : `${temperature}°C`;
+
+    return html`
+      <div class="weather-overlay-card ${weatherInfo.bgClass}">
+        <div class="weather-effects-container">
+          ${this.renderWeatherEffects(weatherInfo.bgClass)}
+        </div>
+        <div class="weather-card-header">
+          <div class="weather-loc-details">
+            <span class="weather-title">Center Weather</span>
+            <span class="weather-coords">${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E</span>
+          </div>
+          <span 
+            class="weather-main-icon" 
+            @click=${() => this.dispatchEvent(new CustomEvent('toggle-forecast'))} 
+            title="${this.showWeatherForecast ? 'Hide 3-day forecast' : 'Show 3-day forecast'}">
+            ${weatherInfo.icon}
+          </span>
+        </div>
+        
+        <div class="weather-temp-row">
+          <span class="weather-temp-val">${displayTemp}</span>
+          <span class="weather-unit-badge" style="cursor: pointer;" @click=${() => this.dispatchEvent(new CustomEvent('toggle-unit'))}>
+            ${this.weatherUnit === 'F' ? 'Fahrenheit' : 'Celsius'}
+          </span>
+          <span class="weather-desc" style="margin-left: auto;">${weatherInfo.label}</span>
+        </div>
+
+        <div class="weather-stats-grid">
+          <div class="weather-stat-item">
+            <span class="weather-stat-icon">💨</span>
+            <div class="weather-stat-info">
+              <span class="weather-stat-lbl">Wind</span>
+              <span class="weather-stat-val">${windspeed} km/h</span>
+            </div>
+          </div>
+          <div class="weather-stat-item" style="cursor: pointer;" @click=${() => this.dispatchEvent(new CustomEvent('toggle-unit'))}>
+            <span class="weather-stat-icon">🔄</span>
+            <div class="weather-stat-info">
+              <span class="weather-stat-lbl">Scale</span>
+              <span class="weather-stat-val">Switch to °${this.weatherUnit === 'F' ? 'C' : 'F'}</span>
+            </div>
+          </div>
+        </div>
+
+        ${this.showWeatherForecast && forecast && forecast.length > 0 ? html`
+          <div class="weather-forecast-section animate-fade-in" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 10px;">
+            <div style="font-size: 0.72rem; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9;">3-Day Forecast</div>
+            <div style="display: flex; gap: 8px; justify-content: space-between;">
+              ${forecast.map((day: any) => {
+                const dayInfo = this.getWeatherInfo(day.weathercode);
+                const maxT = this.weatherUnit === 'F' ? `${((day.tempMax * 9 / 5) + 32).toFixed(0)}°` : `${day.tempMax.toFixed(0)}°`;
+                const minT = this.weatherUnit === 'F' ? `${((day.tempMin * 9 / 5) + 32).toFixed(0)}°` : `${day.tempMin.toFixed(0)}°`;
+                const weekday = new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' });
+                return html`
+                  <div style="flex: 1; background: rgba(0,0,0,0.25); padding: 6px; border-radius: 6px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                    <span style="font-size: 0.68rem; font-weight: 600; opacity: 0.85;">${weekday}</span>
+                    <span style="font-size: 1.1rem; margin: 2px 0;" title="${dayInfo.label}">${dayInfo.icon}</span>
+                    <span style="font-size: 0.68rem; font-weight: 700; color: #f43f5e;">${maxT} <span style="font-weight: 500; opacity: 0.6; color: #38bdf8;">${minT}</span></span>
+                  </div>
+                `;
+              })}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+}
+
+/**
+ * Custom web component for rendering the POI attraction details card.
+ */
+@customElement('poi-details-card')
+export class PoiDetailsCard extends LitElement {
+  @property({ type: Object }) poi: any = null;
+  @property({ type: Boolean }) isSaving = false;
+
+  createRenderRoot() {
+    return this; // Light DOM for styling integration
+  }
+
+  render() {
+    if (!this.poi) return html``;
+    const { name, lat, lng, formattedAddress, baseColor } = this.poi;
+    const colorHex = baseColor ? `rgb(${baseColor.r}, ${baseColor.g}, ${baseColor.b})` : 'var(--color-accent)';
+
+    return html`
+      <div class="poi-details-overlay-card animate-fade-in" style="border-left: 4px solid ${colorHex};">
+        <button class="poi-close-btn" title="Close details" @click=${() => this.dispatchEvent(new CustomEvent('close'))}>
+          <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
+            <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+        <div class="poi-header">
+          <span class="poi-tag" style="background-color: ${colorHex}22; color: ${colorHex};">📍 Attraction Details</span>
+          <h3 class="poi-title">${name}</h3>
+        </div>
+        <p class="poi-address">🗺️ ${formattedAddress}</p>
+        <div class="poi-coordinates">
+          <span class="coordinate-badge">lat: ${lat.toFixed(5)}°</span>
+          <span class="coordinate-badge">lng: ${lng.toFixed(5)}°</span>
+        </div>
+        <div class="poi-actions">
+          <button class="poi-action-btn primary" @click=${() => this.dispatchEvent(new CustomEvent('fly-to'))}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+              <path d="M120-160v-640l760 320-760 320Zm80-120 474-200-474-200v134l240 66-240 66v134Z"/>
+            </svg>
+            Fly To Position
+          </button>
+          <button class="poi-action-btn secondary" ?disabled=${this.isSaving} @click=${() => this.dispatchEvent(new CustomEvent('save-bookmark'))}>
+            <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+              <path d="M200-120v-640q0-33 23.5-56.5T280-840h400q33 0 56.5 23.5T760-780v640L480-240 200-120Zm80-122 200-86 200 86v-544H280v544Zm0-544h400-400Z"/>
+            </svg>
+            ${this.isSaving ? 'Saving...' : 'Add Bookmark'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+}
+
+/**
  * MapApp component for Photorealistic 3D Maps.
  */
 @customElement('gdm-map-app')
@@ -127,6 +560,8 @@ export class MapApp extends LitElement {
   @state() mapTilt = 60;
   @state() mapRange = 2500;
   @state() flyDuration = 3000;
+  @state() tourDwellTime = 3500;
+  @state() optimizeTourPath = false;
   @state() flyEasing: 'sine' | 'cubic' | 'quintic' | 'linear' = 'sine';
   @state() manualSearchQuery = '';
   @state() manualOrigin = '';
@@ -142,7 +577,9 @@ export class MapApp extends LitElement {
   @state() weatherLoading = false;
   @state() weatherError = '';
   @state() weatherUnit: 'C' | 'F' = 'C';
-  @state() bookmarks: Array<{id: string, name: string, lat: number, lng: number, tilt: number, heading: number, range: number}> = [];
+  @state() showWeatherForecast = false;
+  @state() bookmarks: Array<{id: string, name: string, lat: number, lng: number, tilt: number, heading: number, range: number, photoUrl?: string}> = [];
+  @state() loadingPhotoBookmarkIds: Set<string> = new Set();
   @state() newBookmarkName = '';
   @state() bookmarkIsSaving = false;
   @state() appTheme: 'light' | 'dark' = 'dark';
@@ -163,6 +600,8 @@ export class MapApp extends LitElement {
   @state() draggedIndex: number | null = null;
   @state() dragOverIndex: number | null = null;
   @state() selectedCategoryFilter = 'All';
+  @state() selectedPoi: any = null;
+  @state() poiSavingBookmarkId = '';
   @state() timelineFilterApplied = false;
   @state() timelineVisible = true;
   @state() isTourActive = false;
@@ -246,6 +685,22 @@ export class MapApp extends LitElement {
       }
     } catch (e) {
       this.flyEasing = 'sine';
+    }
+    try {
+      const storedDwell = localStorage.getItem('gdm_map_tour_dwell');
+      if (storedDwell) {
+        this.tourDwellTime = Number(storedDwell);
+      } else {
+        this.tourDwellTime = 3500;
+      }
+    } catch (e) {
+      this.tourDwellTime = 3500;
+    }
+    try {
+      const storedOptimize = localStorage.getItem('gdm_map_optimize_tour');
+      this.optimizeTourPath = storedOptimize === 'true';
+    } catch (e) {
+      this.optimizeTourPath = false;
     }
 
     // Intercept Google Maps billing or initialization errors
@@ -1698,6 +2153,66 @@ To add your Google Maps API key:
 
   private tourTimeoutId?: any;
 
+  getDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  getPathDistance(list: any[]): number {
+    let total = 0;
+    for (let i = 0; i < list.length - 1; i++) {
+      total += this.getDistance(list[i].lat, list[i].lng, list[i+1].lat, list[i+1].lng);
+    }
+    return total;
+  }
+
+  getOptimizedPath(list: any[]): any[] {
+    if (list.length <= 2) return list;
+    
+    const unvisited = [...list];
+    const optimized: any[] = [];
+    
+    // Start with the first bookmark to anchor the route
+    const first = unvisited.shift()!;
+    optimized.push(first);
+    
+    let current = first;
+    while (unvisited.length > 0) {
+      let nearestIndex = 0;
+      let minDistance = Infinity;
+      
+      for (let i = 0; i < unvisited.length; i++) {
+        const dist = this.getDistance(current.lat, current.lng, unvisited[i].lat, unvisited[i].lng);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIndex = i;
+        }
+      }
+      
+      current = unvisited[nearestIndex];
+      unvisited.splice(nearestIndex, 1);
+      optimized.push(current);
+    }
+    
+    return optimized;
+  }
+
+  toggleOptimizeTourPath() {
+    this.optimizeTourPath = !this.optimizeTourPath;
+    try {
+      localStorage.setItem('gdm_map_optimize_tour', String(this.optimizeTourPath));
+    } catch (e) {
+      console.error(e);
+    }
+    this.requestUpdate();
+  }
+
   getTourBookmarks() {
     let chronological = [...this.bookmarks].reverse();
     const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
@@ -1705,6 +2220,9 @@ To add your Google Maps API key:
       chronological = chronological.filter(
         b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter
       );
+    }
+    if (this.optimizeTourPath && chronological.length > 2) {
+      return this.getOptimizedPath(chronological);
     }
     return chronological;
   }
@@ -1747,7 +2265,7 @@ To add your Google Maps API key:
     const b = list[this.tourCurrentIndex];
     this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id, true);
 
-    const dwellDuration = 3500;
+    const dwellDuration = this.tourDwellTime;
     const stepDuration = this.flyDuration + dwellDuration;
 
     this.tourTimeoutId = setTimeout(() => {
@@ -1813,20 +2331,36 @@ To add your Google Maps API key:
   renderTimeline() {
     if (this.bookmarks.length === 0) return '';
 
-    // Show chronologically: oldest first, latest last
-    let chronologicalBookmarks = [...this.bookmarks].reverse();
-
+    // Show chronologically: oldest first, latest last, or optimized if enabled
+    const chronologicalBookmarks = this.getTourBookmarks();
     const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
-    if (isFiltered) {
-      chronologicalBookmarks = chronologicalBookmarks.filter(
-        b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter
-      );
+
+    // Calculate path length comparison to show optimization savings for scattered bookmarks
+    let savingsMessage = '';
+    let pctSaved = 0;
+    if (this.bookmarks.length > 2) {
+      const defaultList = [...this.bookmarks].reverse();
+      let rawList = defaultList;
+      if (isFiltered) {
+        rawList = defaultList.filter(b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter);
+      }
+      
+      if (rawList.length > 2) {
+        const rawDist = this.getPathDistance(rawList);
+        const optList = this.getOptimizedPath(rawList);
+        const optDist = this.getPathDistance(optList);
+        
+        if (rawDist > optDist + 0.1) {
+          pctSaved = Math.round(((rawDist - optDist) / rawDist) * 100);
+          savingsMessage = `Smart routing optimizes this sequence to save ${pctSaved}% total travel distance! (${Math.round(rawDist - optDist)} km saved)`;
+        }
+      }
     }
 
     return html`
       <div class="map-timeline-island ${this.timelineVisible ? 'expanded' : 'collapsed'}">
         <div class="timeline-header">
-          <div class="timeline-header-left">
+          <div class="timeline-header-left" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span class="timeline-dot"></span>
             <span class="timeline-title">📍 Journey Route & Timeline</span>
             <span class="timeline-count-badge">
@@ -1836,6 +2370,24 @@ To add your Google Maps API key:
             </span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
+            <!-- Smart Route Toggle button in header if scattered -->
+            ${chronologicalBookmarks.length > 2 && pctSaved > 0 ? html`
+              <button 
+                class="timeline-filter-btn ${this.optimizeTourPath ? 'active' : ''}"
+                @click=${this.toggleOptimizeTourPath}
+                title="${savingsMessage || 'Optimize sequence for scattered stops'}"
+                style="gap: 6px; position: relative;">
+                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
+                  <path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q106 0 191.5 54.5T802-640h-86q-33-54-89-87t-147-33q-116 0-198 82t-82 198q0 116 82 198t198 82q116 0 198-82t82-198q0-11-1-21t-4-21l64-64q11 25 17.5 52.5T840-480q0 150-105 255T480-120Z"/>
+                  <path d="m396-384 272-272-56-56-216 216-96-96-56 56 152 152Z"/>
+                </svg>
+                <span>Smart Route</span>
+                <span class="route-savings-badge ${this.optimizeTourPath ? 'active' : ''}" style="font-size: 0.65rem; background-color: ${this.optimizeTourPath ? '#10b981' : '#0ea5e9'}; color: white; padding: 1px 5px; border-radius: 9999px; font-weight: bold; margin-left: 2px;">
+                  ${this.optimizeTourPath ? `Saved ${pctSaved}%` : `-${pctSaved}%`}
+                </span>
+              </button>
+            ` : ''}
+
             <!-- Auto-Tour Play / Pause & Controls -->
             <button 
               class="timeline-filter-btn ${this.isTourActive ? 'active' : ''}"
@@ -1965,6 +2517,11 @@ To add your Google Maps API key:
       this.weatherData = null;
       this.weatherError = '';
     }
+  }
+
+  toggleWeatherForecast() {
+    this.showWeatherForecast = !this.showWeatherForecast;
+    this.requestUpdate();
   }
 
   setWeatherUnit(unit: 'C' | 'F') {
@@ -2101,6 +2658,26 @@ To add your Google Maps API key:
               // Setup high-performance 3D hover/bounce interaction with dynamic base color
               this.setupMarkerHover(marker, pLat, pLng, baseColor);
 
+              const onMarkerClick = (e: Event) => {
+                e.stopPropagation();
+                this.selectedPoi = {
+                  name: place.displayName || 'Attraction',
+                  lat: pLat,
+                  lng: pLng,
+                  formattedAddress: place.formattedAddress || 'No address details available',
+                  baseColor: baseColor
+                };
+                this.requestUpdate();
+              };
+
+              marker.addEventListener('gmp-click', onMarkerClick);
+              marker.addEventListener('click', onMarkerClick);
+
+              marker._cleanupClick = () => {
+                marker.removeEventListener('gmp-click', onMarkerClick);
+                marker.removeEventListener('click', onMarkerClick);
+              };
+
               (this.map as any).appendChild(marker);
               this.poiMarkers.push(marker);
             }
@@ -2225,6 +2802,9 @@ To add your Google Maps API key:
           if (marker._cleanupHover) {
             marker._cleanupHover();
           }
+          if (marker._cleanupClick) {
+            marker._cleanupClick();
+          }
           marker.remove();
         } catch (e) {
           console.error('Error removing marker:', e);
@@ -2258,7 +2838,9 @@ To add your Google Maps API key:
       const url = this.safeConstructURL('https://api.open-meteo.com/v1/forecast', {
         latitude: latNum.toFixed(4),
         longitude: lngNum.toFixed(4),
-        current_weather: 'true'
+        current_weather: 'true',
+        daily: 'weathercode,temperature_2m_max,temperature_2m_min',
+        timezone: 'auto'
       });
       if (!url) {
         throw new Error('URL construction failed for Open-Meteo weather API');
@@ -2270,6 +2852,19 @@ To add your Google Maps API key:
       }
       const data = await response.json();
       if (data && data.current_weather) {
+        // Extract 3-day forecast
+        const forecast: any[] = [];
+        if (data.daily && data.daily.time) {
+          for (let i = 0; i < Math.min(3, data.daily.time.length); i++) {
+            forecast.push({
+              date: data.daily.time[i],
+              weathercode: data.daily.weathercode[i],
+              tempMax: data.daily.temperature_2m_max[i],
+              tempMin: data.daily.temperature_2m_min[i]
+            });
+          }
+        }
+
         this.weatherData = {
           temperature: data.current_weather.temperature,
           windspeed: data.current_weather.windspeed,
@@ -2277,7 +2872,8 @@ To add your Google Maps API key:
           weathercode: data.current_weather.weathercode,
           time: data.current_weather.time,
           lat: lat,
-          lng: lng
+          lng: lng,
+          forecast: forecast
         };
       } else {
         throw new Error('Invalid weather data structure received.');
@@ -2325,87 +2921,65 @@ To add your Google Maps API key:
     return weatherMap[code] || { label: 'Unknown', icon: '🌡️', bgClass: 'weather-unknown' };
   }
 
+  renderWeatherEffects(bgClass: string) {
+    switch (bgClass) {
+      case 'weather-clear':
+        return html`<div class="weather-effect-clear-flare"></div>`;
+      case 'weather-cloudy':
+        return html`
+          <div class="weather-effect-cloud cloud-1"></div>
+          <div class="weather-effect-cloud cloud-2"></div>
+        `;
+      case 'weather-rainy':
+        return html`
+          <div class="weather-effect-rain-drop drop-1"></div>
+          <div class="weather-effect-rain-drop drop-2"></div>
+          <div class="weather-effect-rain-drop drop-3"></div>
+          <div class="weather-effect-rain-drop drop-4"></div>
+          <div class="weather-effect-rain-drop drop-5"></div>
+        `;
+      case 'weather-snowy':
+        return html`
+          <div class="weather-effect-snow-flake flake-1">❄</div>
+          <div class="weather-effect-snow-flake flake-2">❄</div>
+          <div class="weather-effect-snow-flake flake-3">❄</div>
+          <div class="weather-effect-snow-flake flake-4">❄</div>
+          <div class="weather-effect-snow-flake flake-5">❄</div>
+        `;
+      case 'weather-stormy':
+        return html`
+          <div class="weather-effect-lightning-flash"></div>
+          <div class="weather-effect-rain-drop drop-1"></div>
+          <div class="weather-effect-rain-drop drop-2"></div>
+          <div class="weather-effect-rain-drop drop-3"></div>
+          <div class="weather-effect-rain-drop drop-4"></div>
+        `;
+      case 'weather-fog':
+        return html`
+          <div class="weather-effect-fog-mist mist-1"></div>
+          <div class="weather-effect-fog-mist mist-2"></div>
+        `;
+      default:
+        return html``;
+    }
+  }
+
   renderWeatherCard() {
     if (!this.showWeatherOverlay) {
       return html``;
     }
 
-    if (this.weatherLoading) {
-      return html`
-        <div class="weather-overlay-card">
-          <div class="weather-loading">
-            <svg class="animate-spin" style="width: 20px; height: 20px; margin-right: 8px; display: inline-block; vertical-align: middle;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" style="opacity: 0.25;"></circle>
-              <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" style="opacity: 0.75;"></path>
-            </svg>
-            <span>Fetching weather...</span>
-          </div>
-        </div>
-      `;
-    }
-
-    if (this.weatherError) {
-      return html`
-        <div class="weather-overlay-card weather-error-card">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="color: #ef4444; font-size: 1.2rem;">⚠️</span>
-            <div>
-              <div style="font-weight: 600; font-size: 0.85rem;">Weather Error</div>
-              <div style="font-size: 0.75rem; opacity: 0.8;">${this.weatherError}</div>
-            </div>
-          </div>
-          <button class="weather-retry-btn" @click=${this.fetchWeatherForCenter}>Retry</button>
-        </div>
-      `;
-    }
-
-    if (!this.weatherData) {
-      return html``;
-    }
-
-    const { temperature, windspeed, weathercode, lat, lng } = this.weatherData;
-    const weatherInfo = this.getWeatherInfo(weathercode);
-    const displayTemp = this.weatherUnit === 'F'
-      ? `${((temperature * 9 / 5) + 32).toFixed(1)}°F`
-      : `${temperature}°C`;
-
     return html`
-      <div class="weather-overlay-card ${weatherInfo.bgClass}">
-        <div class="weather-card-header">
-          <div class="weather-loc-details">
-            <span class="weather-title">Center Weather</span>
-            <span class="weather-coords">${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E</span>
-          </div>
-          <span class="weather-main-icon">${weatherInfo.icon}</span>
-        </div>
-        
-        <div class="weather-temp-row">
-          <span class="weather-temp-val">${displayTemp}</span>
-          <span class="weather-unit-badge">${this.weatherUnit === 'F' ? 'Fahrenheit' : 'Celsius'}</span>
-          <span class="weather-desc" style="margin-left: auto;">${weatherInfo.label}</span>
-        </div>
-
-        <div class="weather-stats-grid">
-          <div class="weather-stat-item">
-            <span class="weather-stat-icon">💨</span>
-            <div class="weather-stat-info">
-              <span class="weather-stat-label">Wind</span>
-              <span class="weather-stat-value">${windspeed} km/h</span>
-            </div>
-          </div>
-          <div class="weather-stat-item">
-            <span class="weather-stat-icon">🧭</span>
-            <div class="weather-stat-info">
-              <span class="weather-stat-label">Wind Dir</span>
-              <span class="weather-stat-value">${this.weatherData.winddirection}°</span>
-            </div>
-          </div>
-        </div>
-        
-        <div class="weather-card-footer">
-          Auto-updates as you pan/move the map
-        </div>
-      </div>
+      <weather-overlay-card
+        .weatherData=${this.weatherData}
+        .weatherLoading=${this.weatherLoading}
+        .weatherError=${this.weatherError}
+        .weatherUnit=${this.weatherUnit}
+        .showWeatherForecast=${this.showWeatherForecast}
+        @retry-weather=${this.fetchWeatherForCenter}
+        @toggle-forecast=${this.toggleWeatherForecast}
+        @toggle-unit=${() => this.setWeatherUnit(this.weatherUnit === 'C' ? 'F' : 'C')}
+      ></weather-overlay-card>
     `;
   }
 
@@ -2540,6 +3114,36 @@ To add your Google Maps API key:
     this.newBookmarkName = '';
     this.bookmarkIsSaving = false;
     this.requestUpdate();
+    
+    // Automatically trigger photo fetch in background
+    this.fetchPhotoForBookmark(newBookmark.id);
+  }
+
+  async savePoiAsBookmark(poi: any) {
+    if (!poi) return;
+    this.poiSavingBookmarkId = 'saving';
+    try {
+      const bId = 'b_' + Date.now();
+      const newB = {
+        id: bId,
+        name: '📍 ' + poi.name,
+        lat: poi.lat,
+        lng: poi.lng,
+        tilt: 45,
+        heading: 0,
+        range: 1000,
+      };
+      this.bookmarks = [newB, ...this.bookmarks];
+      this.activeBookmarkId = bId;
+      this.lastAddedBookmarkId = bId;
+      this.saveBookmarksToStorage();
+      this.addMessage('assistant', `I have saved "${poi.name}" as a journey bookmark for you! You can find it under your saved views in the settings panel.`);
+      this.fetchPhotoForBookmark(bId);
+    } catch (e) {
+      console.error('Error saving POI as bookmark', e);
+    } finally {
+      this.poiSavingBookmarkId = '';
+    }
   }
 
   deleteBookmark(id: string) {
@@ -2561,7 +3165,84 @@ To add your Google Maps API key:
     }
   }
 
+  async fetchPhotoForBookmark(id: string) {
+    const bookmark = this.bookmarks.find(b => b.id === id);
+    if (!bookmark) return;
+
+    this.loadingPhotoBookmarkIds.add(id);
+    this.loadingPhotoBookmarkIds = new Set(this.loadingPhotoBookmarkIds);
+    this.requestUpdate();
+
+    try {
+      const google = (window as any).google;
+      if (google && google.maps) {
+        const { Place } = await google.maps.importLibrary('places');
+        
+        // 1. Try searchByText with the bookmark name to find the location and its photos
+        let response = await Place.searchByText({
+          textQuery: bookmark.name,
+          fields: ['displayName', 'photos', 'id'],
+          locationBias: { lat: bookmark.lat, lng: bookmark.lng },
+          maxResultCount: 1
+        });
+
+        let photoUrl = '';
+
+        if (response && response.places && response.places.length > 0) {
+          const place = response.places[0];
+          if (place.photos && place.photos.length > 0) {
+            photoUrl = place.photos[0].getURI({ maxWidth: 200, maxHeight: 200 });
+          }
+        }
+
+        // 2. If no photo found, try searchNearby around the exact coordinates to get any representative photo
+        if (!photoUrl) {
+          response = await Place.searchNearby({
+            locationRestriction: {
+              center: { lat: bookmark.lat, lng: bookmark.lng },
+              radius: 500,
+            },
+            fields: ['displayName', 'photos'],
+            maxResultCount: 5
+          });
+
+          if (response && response.places && response.places.length > 0) {
+            for (const place of response.places) {
+              if (place.photos && place.photos.length > 0) {
+                photoUrl = place.photos[0].getURI({ maxWidth: 200, maxHeight: 200 });
+                break;
+              }
+            }
+          }
+        }
+
+        if (photoUrl) {
+          // Save the photo to the bookmark and persist it
+          this.bookmarks = this.bookmarks.map(b => {
+            if (b.id === id) {
+              return { ...b, photoUrl };
+            }
+            return b;
+          });
+          this.saveBookmarksToStorage();
+        } else {
+          console.warn('No Place Photo found for bookmark:', bookmark.name);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching photo for bookmark:', err);
+    } finally {
+      this.loadingPhotoBookmarkIds.delete(id);
+      this.loadingPhotoBookmarkIds = new Set(this.loadingPhotoBookmarkIds);
+      this.requestUpdate();
+    }
+  }
+
   getBookmarkPhoto(name: string, id: string): string {
+    const bookmark = this.bookmarks.find(b => b.id === id);
+    if (bookmark && bookmark.photoUrl) {
+      return bookmark.photoUrl;
+    }
     const lowerName = name.toLowerCase();
     
     const photos = {
@@ -2903,6 +3584,16 @@ To add your Google Maps API key:
 
   onFlyDurationInput(e: Event) {
     this.flyDuration = Number((e.target as HTMLInputElement).value);
+  }
+
+  onTourDwellTimeInput(e: Event) {
+    const val = Number((e.target as HTMLInputElement).value);
+    this.tourDwellTime = val;
+    try {
+      localStorage.setItem('gdm_map_tour_dwell', String(val));
+    } catch (err) {
+      console.error('Error saving tourDwellTime to localStorage:', err);
+    }
   }
 
   getEasingFunction(type: 'sine' | 'cubic' | 'quintic' | 'linear'): (x: number) => number {
@@ -3349,6 +4040,13 @@ To add your Google Maps API key:
         </gmp-map-3d>
         ${this.renderWeatherCard()}
         ${this.renderMapHud()}
+        <poi-details-card
+          .poi=${this.selectedPoi}
+          .isSaving=${this.poiSavingBookmarkId !== ''}
+          @close=${() => { this.selectedPoi = null; }}
+          @fly-to=${() => { if (this.selectedPoi) this.flyTo(this.selectedPoi.lat, this.selectedPoi.lng, 45, 0, 1000); }}
+          @save-bookmark=${() => this.savePoiAsBookmark(this.selectedPoi)}
+        ></poi-details-card>
       </div>
       <div class="sidebar" role="complementary" aria-labelledby="chat-heading">
         <div class="selector" role="tablist" aria-label="Chat and Settings tabs">
@@ -3613,6 +4311,35 @@ To add your Google Maps API key:
                 <option value="quintic">☄️ Ease In Out (Quintic - Cinematic)</option>
                 <option value="linear">📏 Linear (Mechanical)</option>
               </select>
+
+              <div class="slider-header" style="margin-top: 16px;">
+                <h4 class="section-label">⏱️ Tour Pause Duration</h4>
+                <span class="value-display">${(this.tourDwellTime / 1000).toFixed(1)}s</span>
+              </div>
+              <input
+                type="range"
+                class="settings-slider"
+                min="1000"
+                max="15000"
+                step="500"
+                .value=${this.tourDwellTime}
+                @input=${this.onTourDwellTimeInput} />
+              <div class="slider-ticks">
+                <span>Quick (1s)</span>
+                <span>Long (15s)</span>
+              </div>
+
+              <!-- Smart Route Path Optimization -->
+              <div class="checkbox-container" style="margin-top: 14px;">
+                <input 
+                  type="checkbox" 
+                  id="optimizeTourPathToggle"
+                  ?checked=${this.optimizeTourPath}
+                  @change=${this.toggleOptimizeTourPath} />
+                <label for="optimizeTourPathToggle" style="font-weight: 500; display: flex; align-items: center; gap: 4px;">
+                  <span>🛣️ Smart-Route Scattered Bookmarks</span>
+                </label>
+              </div>
             </div>
 
             <!-- Auto-save Bookmarks Section -->
@@ -3741,7 +4468,24 @@ To add your Google Maps API key:
                         const category = this.getBookmarkCategory(b.name);
                         const emoji = this.getCategoryEmoji(category);
                         return html`
-                          <div 
+                          <bookmark-card
+                            .bookmark=${b}
+                            .isActive=${this.activeBookmarkId === b.id}
+                            .isEditing=${this.editingBookmarkId === b.id}
+                            .editingName=${this.editingBookmarkName}
+                            .isNewlyAdded=${this.lastAddedBookmarkId === b.id}
+                            .isLoadingPhoto=${this.loadingPhotoBookmarkIds.has(b.id)}
+                            .category=${category}
+                            .emoji=${emoji}
+                            .index=${index}
+                            @fly-to=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}
+                            @start-edit=${(e: any) => this.startEditingBookmark(e.detail.id, e.detail.name)}
+                            @save-edit=${(e: any) => { this.editingBookmarkName = e.detail.name; this.saveBookmarkName(e.detail.id); }}
+                            @cancel-edit=${() => this.cancelEditingBookmark()}
+                            @delete=${(e: any) => this.deleteBookmark(e.detail.id)}
+                            @share=${(e: any) => this.shareBookmark(e.detail.bookmark)}
+                            @fetch-photo=${(e: any) => this.fetchPhotoForBookmark(e.detail.id)}
+                            @name-input=${(e: any) => { this.editingBookmarkName = e.detail.value; }}
                             class="bookmark-item ${this.activeBookmarkId === b.id ? 'active' : ''} cat-${category.toLowerCase()} ${this.lastAddedBookmarkId === b.id ? 'newly-added' : ''} ${this.draggedBookmarkId === b.id ? 'dragging' : ''} ${this.dragOverIndex === index ? 'drag-over' : ''}" 
                             id="bookmark-${b.id}" 
                             style="--stagger-delay: ${index * 60}ms;"
@@ -3750,97 +4494,7 @@ To add your Google Maps API key:
                             @dragover=${(e: DragEvent) => this._onBookmarkDragOver(e, index)}
                             @dragend=${() => this._onBookmarkDragEnd()}
                             @drop=${(e: DragEvent) => this._onBookmarkDrop(e, index)}
-                          >
-                            ${this.editingBookmarkId === b.id ? html`
-                              <div class="bookmark-item-editing-form">
-                                 <input 
-                                  type="text" 
-                                  class="bookmark-edit-input" 
-                                  .value=${this.editingBookmarkName} 
-                                  @input=${(e: any) => this.editingBookmarkName = e.target.value}
-                                  @keydown=${(e: KeyboardEvent) => {
-                                    if (e.key === 'Enter') this.saveBookmarkName(b.id);
-                                    if (e.key === 'Escape') this.cancelEditingBookmark();
-                                  }}
-                                  @click=${(e: Event) => e.stopPropagation()}
-                                  autofocus
-                                />
-                                <button class="bookmark-edit-save-btn" title="Save changes" @click=${() => this.saveBookmarkName(b.id)}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
-                                    <path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/>
-                                  </svg>
-                                </button>
-                                <button class="bookmark-edit-cancel-btn" title="Cancel" @click=${() => this.cancelEditingBookmark()}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
-                                    <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
-                                  </svg>
-                                </button>
-                              </div>
-                            ` : html`
-                              <div class="bookmark-drag-handle" title="Drag to reorder" @mousedown=${(e: Event) => e.stopPropagation()}>
-                                <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
-                                  <path d="M360-240q-25 0-42.5-17.5T300-300q0-25 17.5-42.5T360-360q25 0 42.5 17.5T420-300q0-25-17.5-42.5T360-240Zm240 0q-25 0-42.5-17.5T500-300q0-25 17.5-42.5T600-360q25 0 42.5 17.5T660-300q0-25-17.5-42.5T600-240Zm-240-180q-25 0-42.5-17.5T300-480q0-25 17.5-42.5T360-540q25 0 42.5 17.5T420-480q0-25-17.5-42.5T360-420Zm240 0q-25 0-42.5-17.5T500-480q0-25 17.5-42.5T600-540q25 0 42.5 17.5T660-480q0-25-17.5-42.5T600-420Zm-240-180q-25 0-42.5-17.5T300-660q0-25 17.5-42.5T360-720q25 0 42.5 17.5T420-660q0-25-17.5-42.5T360-600Zm240 0q-25 0-42.5-17.5T500-660q0-25 17.5-42.5T600-720q25 0 42.5 17.5T660-660q0-25-17.5-42.5T600-600Z"/>
-                                </svg>
-                              </div>
-                              <div class="bookmark-item-image-wrapper" @click=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}>
-                                <img class="bookmark-item-image" src="${this.getBookmarkPhoto(b.name, b.id)}" alt="${b.name}" loading="lazy" />
-                                <div class="bookmark-item-category-icon ${category.toLowerCase()}" title="${category}">
-                                  ${emoji}
-                                </div>
-                                <div class="bookmark-item-image-badge">
-                                  <svg xmlns="http://www.w3.org/2000/svg" height="10px" viewBox="0 -960 960 960" width="10px" fill="currentColor">
-                                    <path d="M120-160v-640l760 320-760 320Zm80-120 474-200-474-200v134l240 66-240 66v134Z"/>
-                                  </svg>
-                                  FLY
-                                </div>
-                              </div>
-                              <div class="bookmark-item-clickable" @click=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}>
-                                <span class="bookmark-item-name" title="${b.name}">${b.name}</span>
-                                <span class="bookmark-item-coordinates">
-                                  <span class="coordinate-badge">lat: ${b.lat.toFixed(4)}°</span>
-                                  <span class="coordinate-badge">lng: ${b.lng.toFixed(4)}°</span>
-                                  <span class="category-badge ${category.toLowerCase()}">${emoji} ${category}</span>
-                                </span>
-                                <span class="bookmark-item-meta-details">
-                                  Tilt: ${b.tilt}° · Head: ${b.heading}° · ${Math.round(b.range)}m
-                                </span>
-                              </div>
-                              <div class="bookmark-item-actions">
-                                <button 
-                                  class="bookmark-action-btn edit-btn"
-                                  title="Rename bookmark"
-                                  aria-label="Rename bookmark"
-                                  @click=${() => this.startEditingBookmark(b.id, b.name)}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
-                                    <path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/>
-                                  </svg>
-                                </button>
-                                <button 
-                                  class="bookmark-action-btn share-btn ${this.copiedBookmarkId === b.id ? 'copied' : ''}" 
-                                  title="${this.copiedBookmarkId === b.id ? 'Copied!' : 'Copy Shareable Link'}"
-                                  aria-label="Share bookmark" 
-                                  @click=${() => this.shareBookmark(b)}>
-                                  ${this.copiedBookmarkId === b.id ? html`
-                                    <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
-                                      <path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/>
-                                    </svg>
-                                  ` : html`
-                                    <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
-                                      <path d="M720-80q-50 0-85-35t-35-85q0-7 1-14.5t3-13.5L322-392q-17 15-38 23.5t-44 8.5q-50 0-85-35t-35-85q0-50 35-85t85-35q23 0 44 8.5t38 23.5l279-164q-2-6-3-13.5t-1-14.5q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35q-23 0-44-8.5T638-568L359-404q2 6 3 13.5t1 14.5q0 7-1 14.5t-3 13.5l279 164q17-15 38-23.5t44-8.5q50 0 85 35t35 85q0 50-35 85t-85 35Zm0-560q17 0 28.5-11.5T760-680q0-17-11.5-28.5T720-720q-17 0-28.5 11.5T680-680q0 17 11.5 28.5T720-640ZM240-440q17 0 28.5-11.5T280-480q0-17-11.5-28.5T240-520q-17 0-28.5 11.5T200-480q0 17 11.5 28.5T240-440Zm480 280q17 0 28.5-11.5T760-200q0-17-11.5-28.5T720-240q-17 0-28.5 11.5T680-200q0 17 11.5 28.5T720-160Z"/>
-                                    </svg>
-                                  `}
-                                </button>
-                                <button 
-                                  class="bookmark-action-btn delete-btn" 
-                                  aria-label="Delete bookmark" 
-                                  @click=${() => this.deleteBookmark(b.id)}>
-                                  <svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor">
-                                    <path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v500h400v-500ZM360-220h80v-380h-80v380Zm160 0h80v-380h-80v380ZM280-720v500-500Z"/>
-                                  </svg>
-                                </button>
-                              </div>
-                            `}
-                          </div>
+                          ></bookmark-card>
                         `;
                       })}
                     </div>

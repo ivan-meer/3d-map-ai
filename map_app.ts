@@ -127,6 +127,7 @@ export class MapApp extends LitElement {
   @state() mapTilt = 60;
   @state() mapRange = 2500;
   @state() flyDuration = 3000;
+  @state() flyEasing: 'sine' | 'cubic' | 'quintic' | 'linear' = 'sine';
   @state() manualSearchQuery = '';
   @state() manualOrigin = '';
   @state() manualDestination = '';
@@ -140,6 +141,7 @@ export class MapApp extends LitElement {
   @state() weatherData: any = null;
   @state() weatherLoading = false;
   @state() weatherError = '';
+  @state() weatherUnit: 'C' | 'F' = 'C';
   @state() bookmarks: Array<{id: string, name: string, lat: number, lng: number, tilt: number, heading: number, range: number}> = [];
   @state() newBookmarkName = '';
   @state() bookmarkIsSaving = false;
@@ -156,6 +158,10 @@ export class MapApp extends LitElement {
   @state() autoSaveBookmarkEnabled = false;
   @state() autoSaveBookmarkDelay = 5;
   @state() activeBookmarkId = '';
+  @state() lastAddedBookmarkId = '';
+  @state() draggedBookmarkId: string | null = null;
+  @state() draggedIndex: number | null = null;
+  @state() dragOverIndex: number | null = null;
   @state() selectedCategoryFilter = 'All';
   @state() timelineFilterApplied = false;
   @state() timelineVisible = true;
@@ -224,6 +230,22 @@ export class MapApp extends LitElement {
       this.timelineVisible = storedTimelineVisible !== 'false';
     } catch (e) {
       this.timelineVisible = true;
+    }
+    try {
+      const storedUnit = localStorage.getItem('gdm_map_weather_unit');
+      this.weatherUnit = (storedUnit === 'C' || storedUnit === 'F') ? storedUnit : 'C';
+    } catch (e) {
+      this.weatherUnit = 'C';
+    }
+    try {
+      const storedEasing = localStorage.getItem('gdm_map_fly_easing');
+      if (storedEasing === 'sine' || storedEasing === 'cubic' || storedEasing === 'quintic' || storedEasing === 'linear') {
+        this.flyEasing = storedEasing;
+      } else {
+        this.flyEasing = 'sine';
+      }
+    } catch (e) {
+      this.flyEasing = 'sine';
     }
 
     // Intercept Google Maps billing or initialization errors
@@ -492,6 +514,7 @@ To add your Google Maps API key:
                 (this.map as any).flyCameraTo({
                   endCamera: cameraOptions,
                   durationMillis: this.flyDuration,
+                  easingFunction: this.getEasingFunction(this.flyEasing),
                 });
                 if (this.Marker3DElement) {
                   this.marker = new this.Marker3DElement();
@@ -575,6 +598,7 @@ To add your Google Maps API key:
                 (this.map as any).flyCameraTo({
                   endCamera: cameraOptions,
                   durationMillis: this.flyDuration,
+                  easingFunction: this.getEasingFunction(this.flyEasing),
                 });
               }
             }).catch(err => {
@@ -713,6 +737,7 @@ To add your Google Maps API key:
       (this.map as any).flyCameraTo({
         endCamera: cameraOptions,
         durationMillis: this.flyDuration,
+        easingFunction: this.getEasingFunction(this.flyEasing),
       });
 
       // Google Maps: Create and add a 3D marker to the map.
@@ -1139,6 +1164,7 @@ To add your Google Maps API key:
           (this.map as any).flyCameraTo({
             endCamera: cameraOptions,
             durationMillis: this.flyDuration,
+            easingFunction: this.getEasingFunction(this.flyEasing),
           });
         }
       } else {
@@ -1227,6 +1253,7 @@ To add your Google Maps API key:
               (this.map as any).flyCameraTo({
                 endCamera: cameraOptions,
                 durationMillis: this.flyDuration,
+                easingFunction: this.getEasingFunction(this.flyEasing),
               });
 
               infoMsg.innerHTML = await marked.parse(
@@ -1386,10 +1413,11 @@ To add your Google Maps API key:
 
     const animate = (time: number) => {
       const elapsed = time - startTime;
-      const progress = Math.min((elapsed / duration) * 100, 100);
-      this.cameraFlightProgress = progress;
+      const rawProgress = Math.min(elapsed / duration, 1);
+      const easedProgress = this.getEasingFunction(this.flyEasing)(rawProgress);
+      this.cameraFlightProgress = easedProgress * 100;
 
-      if (progress < 100) {
+      if (rawProgress < 1) {
         this.cameraFlightAnimId = requestAnimationFrame(animate);
       } else {
         setTimeout(() => {
@@ -1447,6 +1475,7 @@ To add your Google Maps API key:
     (this.map as any).flyCameraTo({
       endCamera: cameraOptions,
       durationMillis: this.flyDuration,
+      easingFunction: this.getEasingFunction(this.flyEasing),
     });
 
     if (this.autoOrbitOnLoad) {
@@ -1625,6 +1654,7 @@ To add your Google Maps API key:
     };
 
     this.bookmarks = [newBookmark, ...this.bookmarks];
+    this.lastAddedBookmarkId = newBookmark.id;
     this.saveBookmarksToStorage();
     
     textElement.innerHTML = await marked.parse(
@@ -1935,6 +1965,16 @@ To add your Google Maps API key:
       this.weatherData = null;
       this.weatherError = '';
     }
+  }
+
+  setWeatherUnit(unit: 'C' | 'F') {
+    this.weatherUnit = unit;
+    try {
+      localStorage.setItem('gdm_map_weather_unit', unit);
+    } catch (e) {
+      console.error('Error saving weather unit:', e);
+    }
+    this.requestUpdate();
   }
 
   togglePoiMarkers() {
@@ -2325,6 +2365,9 @@ To add your Google Maps API key:
 
     const { temperature, windspeed, weathercode, lat, lng } = this.weatherData;
     const weatherInfo = this.getWeatherInfo(weathercode);
+    const displayTemp = this.weatherUnit === 'F'
+      ? `${((temperature * 9 / 5) + 32).toFixed(1)}°F`
+      : `${temperature}°C`;
 
     return html`
       <div class="weather-overlay-card ${weatherInfo.bgClass}">
@@ -2337,8 +2380,9 @@ To add your Google Maps API key:
         </div>
         
         <div class="weather-temp-row">
-          <span class="weather-temp-val">${temperature}°C</span>
-          <span class="weather-desc">${weatherInfo.label}</span>
+          <span class="weather-temp-val">${displayTemp}</span>
+          <span class="weather-unit-badge">${this.weatherUnit === 'F' ? 'Fahrenheit' : 'Celsius'}</span>
+          <span class="weather-desc" style="margin-left: auto;">${weatherInfo.label}</span>
         </div>
 
         <div class="weather-stats-grid">
@@ -2491,6 +2535,7 @@ To add your Google Maps API key:
     };
 
     this.bookmarks = [newBookmark, ...this.bookmarks];
+    this.lastAddedBookmarkId = newBookmark.id;
     this.saveBookmarksToStorage();
     this.newBookmarkName = '';
     this.bookmarkIsSaving = false;
@@ -2750,6 +2795,73 @@ To add your Google Maps API key:
     this.requestUpdate();
   }
 
+  _onBookmarkDragStart(e: DragEvent, id: string, index: number) {
+    this.draggedBookmarkId = id;
+    this.draggedIndex = index;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+    }
+    const target = e.currentTarget as HTMLElement;
+    target.classList.add('dragging');
+  }
+
+  _onBookmarkDragOver(e: DragEvent, index: number) {
+    e.preventDefault();
+    if (this.draggedIndex === null || this.draggedIndex === index) return;
+    this.dragOverIndex = index;
+  }
+
+  _onBookmarkDrop(e: DragEvent, targetIndex: number) {
+    e.preventDefault();
+    if (this.draggedIndex === null || this.draggedIndex === targetIndex) {
+      this._onBookmarkDragEnd();
+      return;
+    }
+
+    let displayBookmarks = [...this.bookmarks];
+    if (this.selectedCategoryFilter === 'Sort') {
+      displayBookmarks.sort((a, b) => {
+        const catA = this.getBookmarkCategory(a.name);
+        const catB = this.getBookmarkCategory(b.name);
+        if (catA !== catB) return catA.localeCompare(catB);
+        return a.name.localeCompare(b.name);
+      });
+    } else if (this.selectedCategoryFilter !== 'All') {
+      displayBookmarks = displayBookmarks.filter(b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter);
+    }
+
+    const draggedItem = displayBookmarks[this.draggedIndex];
+    const targetItem = displayBookmarks[targetIndex];
+
+    if (!draggedItem || !targetItem) {
+      this._onBookmarkDragEnd();
+      return;
+    }
+
+    const masterDragIndex = this.bookmarks.findIndex(b => b.id === draggedItem.id);
+    let masterTargetIndex = this.bookmarks.findIndex(b => b.id === targetItem.id);
+
+    if (masterDragIndex !== -1 && masterTargetIndex !== -1) {
+      const updatedBookmarks = [...this.bookmarks];
+      updatedBookmarks.splice(masterDragIndex, 1);
+      masterTargetIndex = updatedBookmarks.findIndex(b => b.id === targetItem.id);
+      updatedBookmarks.splice(masterTargetIndex, 0, draggedItem);
+      
+      this.bookmarks = updatedBookmarks;
+      this.saveBookmarksToStorage();
+    }
+
+    this._onBookmarkDragEnd();
+  }
+
+  _onBookmarkDragEnd() {
+    this.draggedBookmarkId = null;
+    this.draggedIndex = null;
+    this.dragOverIndex = null;
+    this.requestUpdate();
+  }
+
   onNewBookmarkNameInput(e: Event) {
     this.newBookmarkName = (e.target as HTMLInputElement).value;
   }
@@ -2791,6 +2903,31 @@ To add your Google Maps API key:
 
   onFlyDurationInput(e: Event) {
     this.flyDuration = Number((e.target as HTMLInputElement).value);
+  }
+
+  getEasingFunction(type: 'sine' | 'cubic' | 'quintic' | 'linear'): (x: number) => number {
+    switch (type) {
+      case 'sine':
+        return (x: number) => -(Math.cos(Math.PI * x) - 1) / 2;
+      case 'cubic':
+        return (x: number) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+      case 'quintic':
+        return (x: number) => x < 0.5 ? 16 * x * x * x * x * x : 1 - Math.pow(-2 * x + 2, 5) / 2;
+      case 'linear':
+      default:
+        return (x: number) => x;
+    }
+  }
+
+  onFlyEasingChange(e: Event) {
+    const val = (e.target as HTMLSelectElement).value as 'sine' | 'cubic' | 'quintic' | 'linear';
+    this.flyEasing = val;
+    try {
+      localStorage.setItem('gdm_map_fly_easing', val);
+    } catch (err) {
+      console.error('Error saving flyEasing to localStorage:', err);
+    }
+    this.requestUpdate();
   }
 
   private orbitAnimationId?: number;
@@ -3459,10 +3596,23 @@ To add your Google Maps API key:
                 step="500"
                 .value=${this.flyDuration}
                 @input=${this.onFlyDurationInput} />
-              <div class="slider-ticks">
+              <div class="slider-ticks" style="margin-bottom: 12px;">
                 <span>Fast (0.5s)</span>
                 <span>Scenic (10s)</span>
               </div>
+
+              <div class="slider-header" style="margin-top: 12px;">
+                <h4 class="section-label">📈 Flight Easing Curve</h4>
+              </div>
+              <select 
+                class="settings-select"
+                @change=${this.onFlyEasingChange}
+                .value=${this.flyEasing}>
+                <option value="sine">🌊 Ease In Out (Sine - Organic)</option>
+                <option value="cubic">🚀 Ease In Out (Cubic - Dynamic)</option>
+                <option value="quintic">☄️ Ease In Out (Quintic - Cinematic)</option>
+                <option value="linear">📏 Linear (Mechanical)</option>
+              </select>
             </div>
 
             <!-- Auto-save Bookmarks Section -->
@@ -3591,7 +3741,16 @@ To add your Google Maps API key:
                         const category = this.getBookmarkCategory(b.name);
                         const emoji = this.getCategoryEmoji(category);
                         return html`
-                          <div class="bookmark-item ${this.activeBookmarkId === b.id ? 'active' : ''}" id="bookmark-${b.id}" style="--stagger-delay: ${index * 60}ms;">
+                          <div 
+                            class="bookmark-item ${this.activeBookmarkId === b.id ? 'active' : ''} cat-${category.toLowerCase()} ${this.lastAddedBookmarkId === b.id ? 'newly-added' : ''} ${this.draggedBookmarkId === b.id ? 'dragging' : ''} ${this.dragOverIndex === index ? 'drag-over' : ''}" 
+                            id="bookmark-${b.id}" 
+                            style="--stagger-delay: ${index * 60}ms;"
+                            draggable="true"
+                            @dragstart=${(e: DragEvent) => this._onBookmarkDragStart(e, b.id, index)}
+                            @dragover=${(e: DragEvent) => this._onBookmarkDragOver(e, index)}
+                            @dragend=${() => this._onBookmarkDragEnd()}
+                            @drop=${(e: DragEvent) => this._onBookmarkDrop(e, index)}
+                          >
                             ${this.editingBookmarkId === b.id ? html`
                               <div class="bookmark-item-editing-form">
                                  <input 
@@ -3618,8 +3777,16 @@ To add your Google Maps API key:
                                 </button>
                               </div>
                             ` : html`
+                              <div class="bookmark-drag-handle" title="Drag to reorder" @mousedown=${(e: Event) => e.stopPropagation()}>
+                                <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
+                                  <path d="M360-240q-25 0-42.5-17.5T300-300q0-25 17.5-42.5T360-360q25 0 42.5 17.5T420-300q0-25-17.5-42.5T360-240Zm240 0q-25 0-42.5-17.5T500-300q0-25 17.5-42.5T600-360q25 0 42.5 17.5T660-300q0-25-17.5-42.5T600-240Zm-240-180q-25 0-42.5-17.5T300-480q0-25 17.5-42.5T360-540q25 0 42.5 17.5T420-480q0-25-17.5-42.5T360-420Zm240 0q-25 0-42.5-17.5T500-480q0-25 17.5-42.5T600-540q25 0 42.5 17.5T660-480q0-25-17.5-42.5T600-420Zm-240-180q-25 0-42.5-17.5T300-660q0-25 17.5-42.5T360-720q25 0 42.5 17.5T420-660q0-25-17.5-42.5T360-600Zm240 0q-25 0-42.5-17.5T500-660q0-25 17.5-42.5T600-720q25 0 42.5 17.5T660-660q0-25-17.5-42.5T600-600Z"/>
+                                </svg>
+                              </div>
                               <div class="bookmark-item-image-wrapper" @click=${() => this.flyTo(b.lat, b.lng, b.tilt, b.heading, b.range, b.id)}>
                                 <img class="bookmark-item-image" src="${this.getBookmarkPhoto(b.name, b.id)}" alt="${b.name}" loading="lazy" />
+                                <div class="bookmark-item-category-icon ${category.toLowerCase()}" title="${category}">
+                                  ${emoji}
+                                </div>
                                 <div class="bookmark-item-image-badge">
                                   <svg xmlns="http://www.w3.org/2000/svg" height="10px" viewBox="0 -960 960 960" width="10px" fill="currentColor">
                                     <path d="M120-160v-640l760 320-760 320Zm80-120 474-200-474-200v134l240 66-240 66v134Z"/>
@@ -3828,6 +3995,26 @@ To add your Google Maps API key:
                   ?checked=${this.showWeatherOverlay}
                   @change=${this.toggleWeatherOverlay} />
                 <label for="weatherOverlayToggle">⚡ Enable Live Weather Overlay</label>
+              </div>
+              
+              <div class="weather-unit-setting">
+                <span class="weather-unit-label">Temperature Unit</span>
+                <div class="weather-unit-segmented">
+                  <button 
+                    class="weather-unit-btn ${this.weatherUnit === 'C' ? 'active' : ''}"
+                    @click=${() => this.setWeatherUnit('C')}
+                    title="Display in Celsius"
+                  >
+                    °C
+                  </button>
+                  <button 
+                    class="weather-unit-btn ${this.weatherUnit === 'F' ? 'active' : ''}"
+                    @click=${() => this.setWeatherUnit('F')}
+                    title="Display in Fahrenheit"
+                  >
+                    °F
+                  </button>
+                </div>
               </div>
             </div>
 

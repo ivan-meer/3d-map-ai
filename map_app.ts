@@ -120,6 +120,7 @@ export class MapApp extends LitElement {
   @state() messages: HTMLElement[] = [];
   @state() mapInitialized = false;
   @state() mapError = '';
+  @state() billingError = '';
   @state() mapMode: 'hybrid' | 'satellite' = 'hybrid';
   @state() defaultUiDisabled = true;
   @state() mapHeading = 315;
@@ -224,6 +225,33 @@ export class MapApp extends LitElement {
     } catch (e) {
       this.timelineVisible = true;
     }
+
+    // Intercept Google Maps billing or initialization errors
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      originalConsoleError.apply(console, args);
+      const msg = args.map(arg => typeof arg === 'string' ? arg : (arg?.message || String(arg))).join(' ');
+      if (/billing/i.test(msg) || /Geocoding Service/i.test(msg) || /REQUEST_DENIED/i.test(msg)) {
+        this.billingError = 'Geocoding or Maps service error: You must enable Billing on the Google Cloud Project. Nominatim backup is active.';
+        this.requestUpdate();
+      }
+    };
+
+    window.addEventListener('error', (event) => {
+      const msg = event.message || '';
+      if (/billing/i.test(msg) || /Geocoding Service/i.test(msg) || /REQUEST_DENIED/i.test(msg)) {
+        this.billingError = 'Geocoding or Maps service error: You must enable Billing on the Google Cloud Project. Nominatim backup is active.';
+        this.requestUpdate();
+      }
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      const msg = event.reason?.message || String(event.reason || '');
+      if (/billing/i.test(msg) || /Geocoding Service/i.test(msg) || /REQUEST_DENIED/i.test(msg)) {
+        this.billingError = 'Geocoding or Maps service error: You must enable Billing on the Google Cloud Project. Nominatim backup is active.';
+        this.requestUpdate();
+      }
+    });
   }
 
   createRenderRoot() {
@@ -3147,6 +3175,32 @@ To add your Google Maps API key:
               aria-live="assertive"
               >${this.mapError}</div
             >`
+          : ''}
+        ${this.billingError
+          ? html`<div
+              class="absolute top-4 left-4 right-4 z-[9999] bg-amber-950/95 border-l-4 border-amber-500 rounded-r-xl shadow-2xl p-4 text-amber-100 flex items-start gap-4 backdrop-blur-md"
+              role="alert"
+              aria-live="polite"
+            >
+              <div class="text-2xl mt-0.5">⚠️</div>
+              <div class="flex-1 min-w-0">
+                <h4 class="font-bold text-amber-400 text-sm mb-1">Google Maps Billing Required</h4>
+                <p class="text-xs text-amber-200/90 leading-relaxed">
+                  The Google Maps Geocoding or Directions API returned a billing error. We have <strong>automatically enabled OpenStreetMap (Nominatim) fallbacks</strong> so you can still search locations and view flight arcs.
+                </p>
+                <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  <a href="https://console.cloud.google.com/project/_/billing/enable" target="_blank" class="text-sky-400 hover:text-sky-300 underline font-medium">Enable Billing on Google Cloud</a>
+                  <a href="https://developers.google.com/maps/gmp-get-started" target="_blank" class="text-sky-400 hover:text-sky-300 underline font-medium">Get Started Guide</a>
+                </div>
+              </div>
+              <button 
+                @click=${() => { this.billingError = ''; }} 
+                class="text-amber-400 hover:text-amber-200 text-lg font-bold p-1 cursor-pointer focus:outline-none transition-colors bg-transparent border-none"
+                aria-label="Dismiss warning"
+              >
+                &times;
+              </button>
+            </div>`
           : ''}
         <!-- Google Maps: The core 3D Map custom element -->
         <gmp-map-3d

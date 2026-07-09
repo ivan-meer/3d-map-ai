@@ -55,7 +55,11 @@ app.use('/api/proxy/*', async (req, res) => {
     res.status(response.status);
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
-      if (lowerKey !== 'transfer-encoding' && lowerKey !== 'content-encoding') {
+      if (
+        lowerKey !== 'transfer-encoding' &&
+        lowerKey !== 'content-encoding' &&
+        lowerKey !== 'content-length'
+      ) {
         res.setHeader(key, value);
       }
     });

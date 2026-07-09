@@ -612,6 +612,7 @@ export class MapApp extends LitElement {
   @state() centerLng = -122.4783;
   @state() recentSearches: string[] = [];
   @state() mcpLogs: Array<{ id: string, timestamp: number, name: string, args: any, success: boolean }> = [];
+  @state() isCapturing = false;
 
   addMcpLog(name: string, args: any, success = true) {
     const log = {
@@ -3850,6 +3851,166 @@ To add your Google Maps API key:
     }
   }
 
+  private findCanvas(element: Element | null): HTMLCanvasElement | null {
+    if (!element) return null;
+    if (element.tagName === 'CANVAS') return element as HTMLCanvasElement;
+    
+    // Check children
+    for (let i = 0; i < element.children.length; i++) {
+      const found = this.findCanvas(element.children[i]);
+      if (found) return found;
+    }
+    
+    // Check shadow DOM
+    if (element.shadowRoot) {
+      for (let i = 0; i < element.shadowRoot.children.length; i++) {
+        const found = this.findCanvas(element.shadowRoot.children[i]);
+        if (found) return found;
+      }
+    }
+    
+    return null;
+  }
+
+  async captureScreenshot() {
+    if (this.isCapturing) return;
+    this.isCapturing = true;
+    
+    const { textElement: statusText } = this.addMessage('assistant', 'Initializing screenshot capture...');
+    
+    try {
+      const webglCanvas = this.findCanvas(this.mapContainerElement);
+      if (!webglCanvas) {
+        throw new Error('WebGL Canvas element not found inside <gmp-map-3d>. Ensure the map is fully loaded.');
+      }
+
+      statusText.innerHTML = 'Capturing 3D viewport canvas context...';
+      
+      // Let's use a double requestAnimationFrame to ensure we are capturing in the main paint cycle
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      const w = webglCanvas.width;
+      const h = webglCanvas.height;
+
+      if (w === 0 || h === 0) {
+        throw new Error('Canvas rendering buffer has dimensions 0x0.');
+      }
+
+      // Create high-resolution 2D offscreen canvas
+      const offscreenCanvas = document.createElement('canvas');
+      offscreenCanvas.width = w;
+      offscreenCanvas.height = h;
+      const ctx = offscreenCanvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to create 2D canvas context for rendering.');
+      }
+
+      // Draw the WebGL canvas onto offscreen canvas
+      ctx.drawImage(webglCanvas, 0, 0);
+
+      // Verify the canvas isn't entirely blank/transparent
+      const pixelData = ctx.getImageData(0, 0, w, h).data;
+      let isBlank = true;
+      // Sample some pixels to check if it's completely transparent
+      const sampleSize = 1000;
+      const step = Math.max(4, Math.floor(pixelData.length / sampleSize));
+      for (let i = 3; i < pixelData.length; i += step) {
+        if (pixelData[i] > 0) {
+          isBlank = false;
+          break;
+        }
+      }
+
+      if (isBlank) {
+        statusText.innerHTML = `⚠️ *Warning: Standard canvas capture returned a blank image (preservation of drawing buffer is inactive).* Attempting buffer refresh technique...`;
+        if (this.map) {
+          const origHeading = this.map.heading || 0;
+          this.map.heading = origHeading + 0.0001;
+          await new Promise(r => setTimeout(r, 100));
+          ctx.drawImage(webglCanvas, 0, 0);
+          this.map.heading = origHeading;
+        }
+      }
+
+      statusText.innerHTML = 'Rendering high-resolution overlay telemetry card...';
+
+      // Design our gorgeous, state-of-the-art cinematic overlay card
+      const barHeight = Math.round(h * 0.12); // 12% of height
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)'; // Slate-900 background
+      ctx.fillRect(0, h - barHeight, w, barHeight);
+
+      // Draw an elegant top line on the bar
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.fillRect(0, h - barHeight, w, 2);
+
+      // Draw a subtle dark-blue accent border
+      ctx.fillStyle = '#0284c7'; // sky-600
+      ctx.fillRect(0, h - barHeight, Math.round(w * 0.35), 3); // cyan accent bar
+
+      // Draw text info on the bar
+      ctx.fillStyle = '#ffffff';
+      const titleFontSize = Math.max(12, Math.round(h * 0.024));
+      ctx.font = `bold ${titleFontSize}px sans-serif`;
+      ctx.fillText('3D VIEWPORT REAL-TIME CAPTURE', Math.round(w * 0.04), h - Math.round(barHeight * 0.6));
+
+      // Draw sub-details
+      const detailFontSize = Math.max(9, Math.round(h * 0.016));
+      ctx.font = `${detailFontSize}px sans-serif`;
+      ctx.fillStyle = '#94a3b8'; // Slate-400
+      ctx.fillText('AI Studio Map Explorer Telemetry', Math.round(w * 0.04), h - Math.round(barHeight * 0.3));
+
+      // Draw coordinates and perspective stats on the right side of the bar
+      ctx.fillStyle = '#38bdf8'; // sky-400
+      ctx.font = `bold ${detailFontSize}px sans-serif`;
+      const coordsText = `🌐 Lat: ${this.centerLat.toFixed(6)}° | Lng: ${this.centerLng.toFixed(6)}°`;
+      ctx.fillText(coordsText, w - Math.round(w * 0.45), h - Math.round(barHeight * 0.6));
+
+      ctx.fillStyle = '#cbd5e1'; // slate-300
+      ctx.font = `${detailFontSize}px sans-serif`;
+      const statsText = `📐 Altitude: ${this.formatRange(this.mapRange)} | Heading: ${Math.round(this.mapHeading)}° | Tilt: ${Math.round(this.mapTilt)}°`;
+      ctx.fillText(statsText, w - Math.round(w * 0.45), h - Math.round(barHeight * 0.3));
+
+      // Add a tiny stamp/watermark in the top right corner of the viewport
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      const stampWidth = Math.max(140, Math.round(w * 0.18));
+      const stampHeight = Math.max(26, Math.round(h * 0.04));
+      ctx.fillRect(w - stampWidth - 20, 20, stampWidth, stampHeight);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.strokeRect(w - stampWidth - 20, 20, stampWidth, stampHeight);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = `bold ${Math.max(8, Math.round(h * 0.013))}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('PHOTOREALISTIC 3D', w - Math.round(stampWidth / 2) - 20, 20 + Math.round(stampHeight * 0.65));
+
+      // Trigger automatic file download
+      statusText.innerHTML = 'Downloading high-resolution PNG image...';
+      const dataUrl = offscreenCanvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `3d-map-viewport-${this.centerLat.toFixed(4)}-${this.centerLng.toFixed(4)}.png`;
+      link.href = dataUrl;
+      link.click();
+
+      statusText.innerHTML = `✅ **Screenshot captured successfully!**
+*   **Dimensions:** ${w} x ${h} pixels
+*   **Coordinates:** ${this.centerLat.toFixed(6)}°, ${this.centerLng.toFixed(6)}°
+*   **Telemetry Details:** Captured Altitude (${this.formatRange(this.mapRange)}), Heading (${Math.round(this.mapHeading)}°), and Tilt (${Math.round(this.mapTilt)}°).
+
+The high-resolution PNG file has been downloaded to your system!`;
+    } catch (err: any) {
+      console.error('Screenshot capture failed:', err);
+      statusText.innerHTML = `❌ **Screenshot capture failed:** ${err?.message || err}`;
+    } finally {
+      this.isCapturing = false;
+    }
+  }
+
   addRecentSearch(query: string) {
     if (!query || !query.trim()) return;
     const cleanQuery = query.trim();
@@ -4103,6 +4264,19 @@ To add your Google Maps API key:
               <path d="M480-480q33 0 56.5-23.5T560-560q0-33-23.5-56.5T480-640q-33 0-56.5 23.5T400-560q0 33 23.5 56.5T480-480Zm0 294q122-112 181-203.5T720-552q0-109-75.5-183.5T480-810q-109 0-184.5 74.5T220-552q0 71 59 162.5T480-186Zm0 106Q319-215 239.5-329.5T160-552q0-150 100.5-249T480-900q162 0 261 98.5T840-552q0 138-79.5 252.5T480-80Zm0-472Z"/>
             </svg>
             <span class="tooltip">${this.showPoiMarkers ? 'Hide Attractions' : 'Show Attractions'}</span>
+          </button>
+
+          <!-- Save High-Resolution Viewport Screenshot -->
+          <button 
+            id="captureScreenshotBtn"
+            class="map-hud-btn ${this.isCapturing ? 'active animate-pulse' : ''}" 
+            ?disabled=${this.isCapturing}
+            @click=${this.captureScreenshot}
+            aria-label="Capture 3D Viewport Screenshot">
+            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
+              <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h128l72-80h240l72 80h128q33 0 56.5 23.5T920-720v480q0 33-23.5 56.5T800-160H160Zm0-80h640v-480H684l-72-80H348l-72 80H160v480Zm320-80q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-80q-42 0-71-29t-29-71q0-42 29-71t71-29q42 0 71 29t29 71q0 42-29 71t-71 29Z"/>
+            </svg>
+            <span class="tooltip">${this.isCapturing ? 'Capturing...' : 'Capture Screenshot'}</span>
           </button>
         </div>
 

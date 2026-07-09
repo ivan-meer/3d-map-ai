@@ -69,6 +69,7 @@ export enum ChatState {
 enum ChatTab {
   GEMINI,
   SETTINGS,
+  MCP_SERVER,
 }
 
 /**
@@ -602,7 +603,6 @@ export class MapApp extends LitElement {
   @state() selectedCategoryFilter = 'All';
   @state() selectedPoi: any = null;
   @state() poiSavingBookmarkId = '';
-  @state() timelineFilterApplied = false;
   @state() timelineVisible = true;
   @state() isTourActive = false;
   @state() tourCurrentIndex = -1;
@@ -610,6 +610,19 @@ export class MapApp extends LitElement {
   @state() centerLat = 37.8199;
   @state() centerLng = -122.4783;
   @state() recentSearches: string[] = [];
+  @state() mcpLogs: Array<{ id: string, timestamp: number, name: string, args: any, success: boolean }> = [];
+
+  addMcpLog(name: string, args: any, success = true) {
+    const log = {
+      id: 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+      timestamp: Date.now(),
+      name,
+      args,
+      success
+    };
+    this.mcpLogs = [log, ...this.mcpLogs].slice(0, 50);
+    this.requestUpdate();
+  }
 
   // Google Maps: Instance of the Google Maps 3D map.
   private map?: any;
@@ -729,6 +742,11 @@ export class MapApp extends LitElement {
         this.requestUpdate();
       }
     });
+
+    (window as any).gm_authFailure = () => {
+      this.billingError = 'Google Maps API authentication or billing error detected. Please check your API key and enable Billing on the Google Cloud Project. Nominatim backup is active.';
+      this.requestUpdate();
+    };
   }
 
   createRenderRoot() {
@@ -1473,7 +1491,6 @@ To add your Google Maps API key:
     if (
       !this.mapInitialized ||
       !this.map ||
-      !this.directionsService ||
       !this.Marker3DElement ||
       !this.Polyline3DElement
     ) {
@@ -1739,6 +1756,10 @@ To add your Google Maps API key:
    *               `location`, `origin`, or `destination`.
    */
   async handleMapQuery(params: MapParams) {
+    if (params._toolCallName) {
+      this.addMcpLog(params._toolCallName, params._toolCallArgs || {});
+    }
+
     if (params.location) {
       this._handleViewLocation(params.location);
     } else if (params.origin && params.destination) {
@@ -1747,6 +1768,77 @@ To add your Google Maps API key:
       // Fallback if only destination is provided, treat as viewing a location
       this._handleViewLocation(params.destination);
     }
+
+    if (params.weather !== undefined) {
+      this.showWeatherOverlay = params.weather;
+      if (this.showWeatherOverlay) {
+        this.fetchWeatherForCenter();
+      } else {
+        this.weatherData = null;
+        this.weatherError = '';
+      }
+    }
+
+    if (params.poi !== undefined) {
+      this.showPoiMarkers = params.poi.enable;
+      if (params.poi.radius !== undefined) {
+        this.poiSearchRadius = params.poi.radius;
+      }
+      if (params.poi.category !== undefined) {
+        this.poiCategoryFilter = params.poi.category;
+      }
+      if (this.showPoiMarkers) {
+        this.fetchPoiForCenter();
+      } else {
+        this.clearPoiMarkers();
+      }
+    }
+
+    if (params.camera !== undefined) {
+      const tilt = params.camera.tilt !== undefined ? params.camera.tilt : this.mapTilt;
+      const heading = params.camera.heading !== undefined ? params.camera.heading : this.mapHeading;
+      const range = params.camera.range !== undefined ? params.camera.range : this.mapRange;
+      this.flyTo(this.centerLat, this.centerLng, tilt, heading, range);
+    }
+
+    if (params.bookmark !== undefined) {
+      if (params.bookmark.action === 'add') {
+        const name = params.bookmark.name || `View at ${this.centerLat.toFixed(4)}, ${this.centerLng.toFixed(4)}`;
+        const bId = 'b_' + Date.now();
+        const newB = {
+          id: bId,
+          name: name,
+          lat: this.centerLat,
+          lng: this.centerLng,
+          tilt: this.mapTilt,
+          heading: this.mapHeading,
+          range: this.mapRange,
+        };
+        this.bookmarks = [newB, ...this.bookmarks];
+        this.activeBookmarkId = bId;
+        this.lastAddedBookmarkId = bId;
+        this.saveBookmarksToStorage();
+        this.addMessage('assistant', `I have saved this view as a bookmark named "${name}".`);
+        this.fetchPhotoForBookmark(bId);
+      } else if (params.bookmark.action === 'list') {
+        const bookmarkNames = this.bookmarks.map(b => b.name).join(', ');
+        this.addMessage('assistant', `Your saved bookmarks are: ${bookmarkNames || 'None yet.'}`);
+      }
+    }
+
+    if (params.tour !== undefined) {
+      if (params.tour.action === 'play') {
+        if (this.bookmarks.length === 0) {
+          this.addMessage('assistant', "You don't have any saved bookmarks to tour. Add some first!");
+        } else {
+          this.startTour();
+        }
+      } else if (params.tour.action === 'stop') {
+        this.stopTour();
+      }
+    }
+
+    this.requestUpdate();
   }
 
   setInputField(message: string) {
@@ -2147,10 +2239,6 @@ To add your Google Maps API key:
     }
   }
 
-  toggleTimelineFilter() {
-    this.timelineFilterApplied = !this.timelineFilterApplied;
-  }
-
   private tourTimeoutId?: any;
 
   getDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2215,7 +2303,7 @@ To add your Google Maps API key:
 
   getTourBookmarks() {
     let chronological = [...this.bookmarks].reverse();
-    const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
+    const isFiltered = this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
     if (isFiltered) {
       chronological = chronological.filter(
         b => this.getBookmarkCategory(b.name) === this.selectedCategoryFilter
@@ -2333,7 +2421,7 @@ To add your Google Maps API key:
 
     // Show chronologically: oldest first, latest last, or optimized if enabled
     const chronologicalBookmarks = this.getTourBookmarks();
-    const isFiltered = this.timelineFilterApplied && this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
+    const isFiltered = this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort';
 
     // Calculate path length comparison to show optimization savings for scattered bookmarks
     let savingsMessage = '';
@@ -2442,17 +2530,6 @@ To add your Google Maps API key:
               </div>
             ` : ''}
 
-            ${this.selectedCategoryFilter !== 'All' && this.selectedCategoryFilter !== 'Sort' ? html`
-              <button 
-                class="timeline-filter-btn ${this.timelineFilterApplied ? 'active' : ''}" 
-                @click=${this.toggleTimelineFilter}
-                title="${this.timelineFilterApplied ? 'Show All Bookmarks' : `Filter by current category: ${this.selectedCategoryFilter}`}">
-                <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 -960 960 960" width="14px" fill="currentColor">
-                  <path d="M440-160v-326L184-760h592L520-486v326h-80Z"/>
-                </svg>
-                <span>${this.timelineFilterApplied ? `Filtered` : 'Filter Category'}</span>
-              </button>
-            ` : ''}
             <button class="timeline-collapse-btn" @click=${this.toggleTimelineVisibility} title="${this.timelineVisible ? 'Collapse Timeline' : 'Expand Timeline'}">
               ${this.timelineVisible ? html`
                 <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor">
@@ -4084,6 +4161,23 @@ To add your Google Maps API key:
             </svg>
             <span>Settings</span>
           </button>
+          <button
+            id="mcpTab"
+            role="tab"
+            aria-selected=${this.selectedChatTab === ChatTab.MCP_SERVER}
+            aria-controls="mcp-panel"
+            class=${classMap({
+              'selected-tab': this.selectedChatTab === ChatTab.MCP_SERVER,
+            })}
+            @click=${() => {
+              this.selectedChatTab = ChatTab.MCP_SERVER;
+            }}>
+            <!-- Terminal/Server Icon -->
+            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
+              <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H160v400Zm120-80h400v-80H280v80Zm0-120h400v-80H280v80ZM160-240v-400 400Z"/>
+            </svg>
+            <span>MCP Server</span>
+          </button>
         </div>
         <div
           id="chat-panel"
@@ -4787,6 +4881,214 @@ To add your Google Maps API key:
               ` : ''}
 
               ${this.poiLoading ? html`<div style="font-size: 0.75rem; color: var(--color-text3); margin-top: 8px; padding-left: 24px;">Finding POIs...</div>` : ''}
+            </div>
+
+          </div>
+        </div>
+
+        <div
+          id="mcp-panel"
+          role="tabpanel"
+          aria-labelledby="mcpTab"
+          class=${classMap({
+            'tabcontent': true,
+            'showtab': this.selectedChatTab === ChatTab.MCP_SERVER,
+          })}>
+          <div class="settings-container">
+            <h3 class="settings-title" style="display: flex; align-items: center; gap: 8px;">
+              <span>🤖</span> MCP Server Control
+            </h3>
+            
+            <!-- Connection Status -->
+            <div class="settings-section">
+              <h4 class="section-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                <span style="display: inline-block; width: 8px; height: 8px; background-color: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981;"></span>
+                <span>Active Map Server Connection</span>
+              </h4>
+              <div style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.03)); border: 1px solid var(--color-sidebar-border); border-radius: 8px; padding: 12px; margin-top: 4px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                  <span style="font-size: 0.8rem; font-weight: 600; color: var(--color-text1);">AI Studio Google Map Server</span>
+                  <span style="font-size: 0.65rem; font-weight: 600; color: #10b981; background-color: rgba(16, 185, 129, 0.1); padding: 1px 6px; border-radius: 9999px;">
+                    ONLINE
+                  </span>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--color-text2); line-height: 1.5; display: flex; flex-direction: column; gap: 2px;">
+                  <div><strong>Protocol version:</strong> v2024-11-05</div>
+                  <div><strong>Link transport:</strong> InMemory (Client-Linked)</div>
+                  <div><strong>Registered tools:</strong> 7 Active Schemas</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Exposed Tools Inspector -->
+            <div class="settings-section">
+              <h4 class="section-label">🛠️ Exposed Schemas & Simulators</h4>
+              <p style="font-size: 0.7rem; color: var(--color-text3); margin-top: 2px; margin-bottom: 10px; line-height: 1.3;">
+                Click any simulator button below to execute the tool locally and check its behavior.
+              </p>
+              
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <!-- Tool 1: View Location -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">view_location_google_maps</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> View a specific query or geographical location.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ query: string }</code></div>
+                    <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; width: 100%; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ location: "Paris, France", _toolCallName: 'view_location_google_maps', _toolCallArgs: { query: "Paris, France" } })}>
+                      ⚡ Simulate: Fly to Paris, France
+                    </button>
+                  </div>
+                </details>
+
+                <!-- Tool 2: Directions -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">directions_on_google_maps</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Search directions from origin to destination.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ origin: string, destination: string }</code></div>
+                    <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; width: 100%; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ origin: "San Francisco", destination: "Los Angeles", _toolCallName: 'directions_on_google_maps', _toolCallArgs: { origin: "San Francisco", destination: "Los Angeles" } })}>
+                      ⚡ Simulate: Directions SF to LA
+                    </button>
+                  </div>
+                </details>
+
+                <!-- Tool 3: Weather -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">toggle_weather_overlay</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Enable/disable live weather layer overlay.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ enable: boolean }</code></div>
+                    <div style="display: flex; gap: 4px;">
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ weather: true, _toolCallName: 'toggle_weather_overlay', _toolCallArgs: { enable: true } })}>
+                        Enable Overlay
+                      </button>
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; background-color: transparent; border: 1px solid var(--color-sidebar-border); color: var(--color-text2); text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ weather: false, _toolCallName: 'toggle_weather_overlay', _toolCallArgs: { enable: false } })}>
+                        Disable Overlay
+                      </button>
+                    </div>
+                  </div>
+                </details>
+
+                <!-- Tool 4: POIs -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">toggle_poi_markers</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Show/hide nearby local points of interest.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ enable: boolean, radius?: number, category?: string }</code></div>
+                    <div style="display: flex; gap: 4px;">
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ poi: { enable: true, radius: 2000, category: 'museums' }, _toolCallName: 'toggle_poi_markers', _toolCallArgs: { enable: true, radius: 2000, category: 'museums' } })}>
+                        Show Museums
+                      </button>
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; background-color: transparent; border: 1px solid var(--color-sidebar-border); color: var(--color-text2); text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ poi: { enable: false }, _toolCallName: 'toggle_poi_markers', _toolCallArgs: { enable: false } })}>
+                        Hide POIs
+                      </button>
+                    </div>
+                  </div>
+                </details>
+
+                <!-- Tool 5: Camera -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">set_map_camera</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Programmatically rotate or tilt the 3D camera.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ tilt?: number, heading?: number, range?: number }</code></div>
+                    <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; width: 100%; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ camera: { tilt: 70, heading: 270, range: 1500 }, _toolCallName: 'set_map_camera', _toolCallArgs: { tilt: 70, heading: 270, range: 1500 } })}>
+                      ⚡ Simulate: Tilt 70° facing West
+                    </button>
+                  </div>
+                </details>
+
+                <!-- Tool 6: Bookmarks -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">manage_bookmarks</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Programmatically save bookmarks or list them.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ action: "add"|"list", name?: string }</code></div>
+                    <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; width: 100%; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ bookmark: { action: 'add', name: '🤖 AI Saved Landmark' }, _toolCallName: 'manage_bookmarks', _toolCallArgs: { action: 'add', name: 'AI Saved Landmark' } })}>
+                      ⚡ Simulate: Save Current View
+                    </button>
+                  </div>
+                </details>
+
+                <!-- Tool 7: Tour -->
+                <details style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.02)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px;">
+                  <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--color-text1); user-select: none; outline: none; list-style: none; display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: monospace; color: var(--color-accent);">manage_tour</span>
+                    <span style="font-size: 0.65rem; color: var(--color-text3);">▶</span>
+                  </summary>
+                  <div style="font-size: 0.7rem; color: var(--color-text2); margin-top: 6px; line-height: 1.3; border-top: 1px dashed var(--color-sidebar-border); padding-top: 6px;">
+                    <div style="margin-bottom: 4px;"><strong>Description:</strong> Start or stop the auto-tour through bookmarks.</div>
+                    <div style="margin-bottom: 6px;"><strong>Arguments schema:</strong> <code>{ action: "play"|"stop" }</code></div>
+                    <div style="display: flex; gap: 4px;">
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ tour: { action: 'play' }, _toolCallName: 'manage_tour', _toolCallArgs: { action: 'play' } })}>
+                        Play Tour
+                      </button>
+                      <button class="settings-button" style="font-size: 0.65rem; padding: 4px 8px; height: auto; flex: 1; background-color: transparent; border: 1px solid var(--color-sidebar-border); color: var(--color-text2); text-align: center; justify-content: center;" @click=${() => this.handleMapQuery({ tour: { action: 'stop' }, _toolCallName: 'manage_tour', _toolCallArgs: { action: 'stop' } })}>
+                        Stop Tour
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <!-- Transaction Log -->
+            <div class="settings-section">
+              <h4 class="section-label" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <span>📜 Real-Time Transaction Log</span>
+                ${this.mcpLogs.length > 0 ? html`
+                  <button @click=${() => { this.mcpLogs = []; this.requestUpdate(); }} style="background: transparent; border: none; font-size: 0.65rem; color: var(--color-accent); cursor: pointer; padding: 2px 4px;">
+                    Clear logs
+                  </button>
+                ` : ''}
+              </h4>
+              
+              ${this.mcpLogs.length === 0 ? html`
+                <div style="text-align: center; padding: 18px 10px; border: 1px dashed var(--color-sidebar-border); border-radius: 8px; color: var(--color-text3); font-size: 0.72rem; margin-top: 6px;">
+                  No transactions recorded yet. Ask Gemini to adjust the map or click a simulation button above!
+                </div>
+              ` : html`
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px; max-height: 280px; overflow-y: auto; padding-right: 2px;">
+                  ${this.mcpLogs.map(log => {
+                    const timeStr = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    return html`
+                      <div style="background-color: var(--color-sidebar-bg-alt, rgba(0,0,0,0.03)); border: 1px solid var(--color-sidebar-border); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 4px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                          <span style="font-family: monospace; font-size: 0.7rem; font-weight: 600; color: var(--color-accent);">${log.name}</span>
+                          <span style="font-size: 0.65rem; color: var(--color-text3);">${timeStr}</span>
+                        </div>
+                        <div style="background-color: rgba(0,0,0,0.04); padding: 4px 6px; border-radius: 4px; font-family: monospace; font-size: 0.65rem; color: var(--color-text2); overflow-x: auto; white-space: pre-wrap; word-break: break-all;">${JSON.stringify(log.args, null, 2)}</div>
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 2px; border-top: 1px dashed var(--color-sidebar-border); padding-top: 4px;">
+                          <span style="display: flex; align-items: center; gap: 4px; font-size: 0.65rem; font-weight: 600; color: #10b981;">
+                            ✅ Success
+                          </span>
+                          <button class="settings-button" style="font-size: 0.6rem; padding: 2px 6px; height: auto;" @click=${() => this.handleMapQuery({ ...log.args, _toolCallName: log.name, _toolCallArgs: log.args })}>
+                            Replay Call
+                          </button>
+                        </div>
+                      </div>
+                    `;
+                  })}
+                </div>
+              `}
             </div>
 
           </div>

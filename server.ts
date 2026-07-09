@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Readable } from 'stream';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,8 +47,14 @@ app.use('/api/proxy/*', async (req, res) => {
     };
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      fetchOptions.body = req;
-      (fetchOptions as any).duplex = 'half';
+      // Buffer request body in memory to prevent streaming body duplex issues
+      const bodyBuffer = await new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', (err) => reject(err));
+      });
+      fetchOptions.body = bodyBuffer;
     }
 
     const response = await fetch(url.toString(), fetchOptions);
@@ -64,15 +71,16 @@ app.use('/api/proxy/*', async (req, res) => {
       }
     });
 
+    // Explicitly set headers to prevent reverse proxies (e.g. Nginx, Cloud Run) from buffering stream chunks
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
     if (response.body) {
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
+      Readable.fromWeb(response.body as any).pipe(res);
+    } else {
+      res.end();
     }
-    res.end();
   } catch (error) {
     console.error('Server proxy error:', error);
     if (!res.headersSent) {

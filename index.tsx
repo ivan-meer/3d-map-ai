@@ -46,6 +46,70 @@ Tool Usage Guidelines:
     *   **Auto-Tours:** When the user wants to take a tour of their saved landmarks, use 'manage_tour' with 'action: "play"'.
 4.  **Explain Actions and Add Fun Facts:** After initiating a map tool call, explain what you are displaying or adjusting, and share fascinating historical, scientific, or travel trivia about the destination.`;
 
+// Client-side fetch interceptor to guarantee SSE streams always end with a double newline (\n\n).
+// This prevents the SDK from throwing "Incomplete JSON segment at the end" when proxies (like Vite or Nginx)
+// buffer or strip trailing whitespace/newlines from SSE responses.
+const originalFetch = window.fetch;
+window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+  const url =
+    typeof input === 'string'
+      ? input
+      : input instanceof URL
+      ? input.toString()
+      : input.url;
+
+  if (url.includes('streamGenerateContent') && url.includes('alt=sse')) {
+    const response = await originalFetch(input, init);
+    if (!response.ok || !response.body) {
+      return response;
+    }
+
+    const reader = response.body.getReader();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let lastChunkStr = '';
+
+    const newStream = new ReadableStream({
+      async pull(controller: any) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            // Check if the final chunk ends with double newline (\n\n or \r\n\r\n)
+            if (
+              lastChunkStr &&
+              !lastChunkStr.endsWith('\n\n') &&
+              !lastChunkStr.endsWith('\r\n\r\n')
+            ) {
+              console.log(
+                '[Fetch Interceptor] Appending missing trailing double newline to stream'
+              );
+              const missingNewlines = lastChunkStr.endsWith('\n') ? '\n' : '\n\n';
+              controller.enqueue(encoder.encode(missingNewlines));
+            }
+            controller.close();
+            return;
+          }
+          lastChunkStr = decoder.decode(value, { stream: true });
+          controller.enqueue(value);
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+      cancel() {
+        reader.cancel();
+      },
+    });
+
+    return new Response(newStream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  return originalFetch(input, init);
+};
+
 const ai = new GoogleGenAI({
   apiKey: 'PROXY_MODE', // Keep as dummy string, actual key appended securely on server/proxy
   httpOptions: {

@@ -86,16 +86,26 @@ app.use('/api/proxy/*', async (req, res) => {
 
     if (response.body) {
       const reader = response.body.getReader();
+      const decoder = new TextDecoder();
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
             break;
           }
+          const chunkStr = decoder.decode(value, { stream: true });
+          console.log(`[Server] Proxying chunk (${value.length} bytes):`, chunkStr);
           res.write(value);
           if ((res as any).flush) {
             (res as any).flush();
           }
+        }
+        // Ensure that text/event-stream responses end with a double newline
+        // so that the client-side parser matches and parses the last event.
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/event-stream')) {
+          console.log('[Server] Stream ended. Appending double newline.');
+          res.write('\n\n');
         }
       } catch (err) {
         console.error('[Server] Stream reading error:', err);

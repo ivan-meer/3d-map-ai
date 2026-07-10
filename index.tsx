@@ -115,51 +115,107 @@ document.addEventListener('DOMContentLoaded', async (event) => {
     try {
       // Outer try for overall message handling including post-processing
       try {
-        // Inner try for AI interaction and message parsing
-        const stream = await aiChat.sendMessageStream({message: input});
+        let currentInput: any = {message: input};
 
-        for await (const chunk of stream) {
-          for (const candidate of chunk.candidates ?? []) {
-            for (const part of candidate.content?.parts ?? []) {
-              if (part.functionCall) {
-                console.log(
-                  'FUNCTION CALL:',
-                  part.functionCall.name,
-                  part.functionCall.args,
-                );
-                const mcpCall = {
-                  name: camelCaseToDash(part.functionCall.name!),
-                  arguments: part.functionCall.args,
-                };
+        while (true) {
+          // Inner try for AI interaction and message parsing
+          const stream = await aiChat.sendMessageStream(currentInput);
+          let functionCallsToExecute: any[] = [];
 
-                const explanation =
-                  'Calling function:\n```json\n' +
-                  JSON.stringify(mcpCall, null, 2) +
-                  '\n```';
-                const {textElement: functionCallText} = mapApp.addMessage(
-                  'assistant',
-                  '',
-                );
-                functionCallText.innerHTML = await marked.parse(explanation);
-              }
+          for await (const chunk of stream) {
+            for (const candidate of chunk.candidates ?? []) {
+              for (const part of candidate.content?.parts ?? []) {
+                if (part.functionCall) {
+                  console.log(
+                    'FUNCTION CALL:',
+                    part.functionCall.name,
+                    part.functionCall.args,
+                  );
+                  functionCallsToExecute.push(part.functionCall);
 
-              if (part.thought) {
-                mapApp.setChatState(ChatState.THINKING);
-                thoughtAccumulator += ' ' + part.thought;
-                thinkingElement.innerHTML =
-                  await marked.parse(thoughtAccumulator);
-                if (thinkingContainer) {
-                  thinkingContainer.classList.remove('hidden');
-                  thinkingContainer.setAttribute('open', 'true');
+                  const normalizedName = part.functionCall.name!
+                    .replace(/([a-z])([A-Z])/g, '$1_$2')
+                    .replace(/-/g, '_')
+                    .toLowerCase();
+
+                  const mcpCall = {
+                    name: normalizedName,
+                    arguments: part.functionCall.args,
+                  };
+
+                  const explanation =
+                    'Calling function:\n```json\n' +
+                    JSON.stringify(mcpCall, null, 2) +
+                    '\n```';
+                  const {textElement: functionCallText} = mapApp.addMessage(
+                    'assistant',
+                    '',
+                  );
+                  functionCallText.innerHTML = await marked.parse(explanation);
                 }
-              } else if (part.text) {
-                mapApp.setChatState(ChatState.EXECUTING);
-                newCode += part.text;
-                textElement.innerHTML = await marked.parse(newCode);
+
+                if (part.thought) {
+                  mapApp.setChatState(ChatState.THINKING);
+                  thoughtAccumulator += ' ' + part.thought;
+                  thinkingElement.innerHTML =
+                    await marked.parse(thoughtAccumulator);
+                  if (thinkingContainer) {
+                    thinkingContainer.classList.remove('hidden');
+                    thinkingContainer.setAttribute('open', 'true');
+                  }
+                } else if (part.text) {
+                  mapApp.setChatState(ChatState.EXECUTING);
+                  newCode += part.text;
+                  textElement.innerHTML = await marked.parse(newCode);
+                }
+                mapApp.scrollToTheEnd();
               }
-              mapApp.scrollToTheEnd();
             }
           }
+
+          if (functionCallsToExecute.length === 0) {
+            break; // No more function calls, exit the loop
+          }
+
+          // Execute function calls
+          const functionResponses = [];
+          for (const fc of functionCallsToExecute) {
+            const normalizedName = fc.name
+              .replace(/([a-z])([A-Z])/g, '$1_$2')
+              .replace(/-/g, '_')
+              .toLowerCase();
+
+            try {
+              console.log(`Executing tool ${normalizedName} via MCP Client...`);
+              const toolResult = await mcpClient.callTool({
+                name: normalizedName,
+                arguments: fc.args,
+              });
+              console.log('Tool result:', toolResult);
+
+              // Log to the MCP logs tab in MapApp
+              mapApp.addMcpLog(normalizedName, fc.args, true);
+
+              functionResponses.push({
+                functionResponse: {
+                  name: fc.name,
+                  response: toolResult,
+                },
+              });
+            } catch (err) {
+              console.error(`Error calling tool ${normalizedName}:`, err);
+              mapApp.addMcpLog(normalizedName, fc.args, false);
+              functionResponses.push({
+                functionResponse: {
+                  name: fc.name,
+                  response: { error: String(err) },
+                },
+              });
+            }
+          }
+
+          // Set the next message as the function responses
+          currentInput = {message: functionResponses};
         }
       } catch (e: unknown) {
         // Catch for AI interaction errors.

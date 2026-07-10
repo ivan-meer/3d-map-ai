@@ -33,7 +33,15 @@ app.use('/api/proxy/*', async (req, res) => {
     for (const [key, value] of Object.entries(req.headers)) {
       const lowerKey = key.toLowerCase();
       // Remove host, referer, origin to avoid CORS/permission errors
-      if (lowerKey !== 'host' && lowerKey !== 'referer' && lowerKey !== 'origin') {
+      // Exclude accept-encoding to prevent receiving gzip/deflate compressed streams we cannot parse/pipe as-is
+      // Exclude content-length to allow fetch to automatically compute the length of our buffered request body
+      if (
+        lowerKey !== 'host' &&
+        lowerKey !== 'referer' &&
+        lowerKey !== 'origin' &&
+        lowerKey !== 'accept-encoding' &&
+        lowerKey !== 'content-length'
+      ) {
         if (value) {
           headers.set(key, String(value));
         }
@@ -77,7 +85,24 @@ app.use('/api/proxy/*', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
 
     if (response.body) {
-      Readable.fromWeb(response.body as any).pipe(res);
+      const reader = response.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          res.write(value);
+          if ((res as any).flush) {
+            (res as any).flush();
+          }
+        }
+      } catch (err) {
+        console.error('[Server] Stream reading error:', err);
+      } finally {
+        reader.releaseLock();
+        res.end();
+      }
     } else {
       res.end();
     }

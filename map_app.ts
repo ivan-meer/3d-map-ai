@@ -563,7 +563,7 @@ export class MapApp extends LitElement {
   @state() flyDuration = 3000;
   @state() tourDwellTime = 3500;
   @state() optimizeTourPath = false;
-  @state() flyEasing: 'sine' | 'cubic' | 'quintic' | 'linear' = 'sine';
+  @state() flyEasing: 'sine' | 'cubic' | 'quintic' | 'linear' | 'cinematic' = 'sine';
   @state() manualSearchQuery = '';
   @state() manualOrigin = '';
   @state() manualDestination = '';
@@ -593,6 +593,9 @@ export class MapApp extends LitElement {
   @state() editingBookmarkId = '';
   @state() editingBookmarkName = '';
   @state() autoOrbitOnLoad = false;
+  @state() labelsEnabled = true;
+  @state() buildingsEnabled = true;
+  @state() terrainEnabled = true;
   @state() autoSaveBookmarkEnabled = false;
   @state() autoSaveBookmarkDelay = 5;
   @state() activeBookmarkId = '';
@@ -693,13 +696,28 @@ export class MapApp extends LitElement {
     }
     try {
       const storedEasing = localStorage.getItem('gdm_map_fly_easing');
-      if (storedEasing === 'sine' || storedEasing === 'cubic' || storedEasing === 'quintic' || storedEasing === 'linear') {
+      if (storedEasing === 'sine' || storedEasing === 'cubic' || storedEasing === 'quintic' || storedEasing === 'linear' || storedEasing === 'cinematic') {
         this.flyEasing = storedEasing;
       } else {
         this.flyEasing = 'sine';
       }
     } catch (e) {
       this.flyEasing = 'sine';
+    }
+    try {
+      this.labelsEnabled = localStorage.getItem('gdm_map_labels_enabled') !== 'false';
+    } catch (e) {
+      this.labelsEnabled = true;
+    }
+    try {
+      this.buildingsEnabled = localStorage.getItem('gdm_map_buildings_enabled') !== 'false';
+    } catch (e) {
+      this.buildingsEnabled = true;
+    }
+    try {
+      this.terrainEnabled = localStorage.getItem('gdm_map_terrain_enabled') !== 'false';
+    } catch (e) {
+      this.terrainEnabled = true;
     }
     try {
       const storedDwell = localStorage.getItem('gdm_map_tour_dwell');
@@ -3741,7 +3759,7 @@ To add your Google Maps API key:
     }
   }
 
-  getEasingFunction(type: 'sine' | 'cubic' | 'quintic' | 'linear'): (x: number) => number {
+  getEasingFunction(type: 'sine' | 'cubic' | 'quintic' | 'linear' | 'cinematic'): (x: number) => number {
     switch (type) {
       case 'sine':
         return (x: number) => -(Math.cos(Math.PI * x) - 1) / 2;
@@ -3749,14 +3767,185 @@ To add your Google Maps API key:
         return (x: number) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
       case 'quintic':
         return (x: number) => x < 0.5 ? 16 * x * x * x * x * x : 1 - Math.pow(-2 * x + 2, 5) / 2;
+      case 'cinematic':
+        return (x: number) => {
+          if (x === 0) return 0;
+          if (x === 1) return 1;
+          if (x < 0.5) {
+            return Math.pow(2, 20 * x - 10) / 2;
+          }
+          return (2 - Math.pow(2, -20 * x + 10)) / 2;
+        };
       case 'linear':
       default:
         return (x: number) => x;
     }
   }
 
+  toggleLabels() {
+    this.labelsEnabled = !this.labelsEnabled;
+    try {
+      localStorage.setItem('gdm_map_labels_enabled', String(this.labelsEnabled));
+    } catch (e) {
+      console.error('Error saving labelsEnabled to localStorage:', e);
+    }
+    if (this.map) {
+      (this.map as any).defaultLabelsDisabled = !this.labelsEnabled;
+    }
+    this.requestUpdate();
+  }
+
+  toggleBuildings() {
+    this.buildingsEnabled = !this.buildingsEnabled;
+    try {
+      localStorage.setItem('gdm_map_buildings_enabled', String(this.buildingsEnabled));
+    } catch (e) {
+      console.error('Error saving buildingsEnabled to localStorage:', e);
+    }
+    if (this.map) {
+      (this.map as any).defaultBuildingsDisabled = !this.buildingsEnabled;
+    }
+    this.requestUpdate();
+  }
+
+  toggleTerrain() {
+    this.terrainEnabled = !this.terrainEnabled;
+    try {
+      localStorage.setItem('gdm_map_terrain_enabled', String(this.terrainEnabled));
+    } catch (e) {
+      console.error('Error saving terrainEnabled to localStorage:', e);
+    }
+    if (this.map) {
+      try {
+        if (typeof (this.map as any).setMapTypeId === 'function') {
+          (this.map as any).setMapTypeId(this.terrainEnabled ? 'terrain' : 'roadmap');
+        }
+      } catch (e) {
+        console.warn('MapType toggle not supported on this map instance:', e);
+      }
+    }
+    this.requestUpdate();
+  }
+
+  async downloadJourneyPDF() {
+    if (this.bookmarks.length === 0) {
+      alert("No bookmarks saved yet! Save some viewpoints to download your journey.");
+      return;
+    }
+
+    try {
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF();
+      
+      // Theme colors matching design guidelines (slate, crisp off-white, teal/sky accents)
+      const primaryColor = [14, 165, 233]; // sky-500
+      const textColor = [15, 23, 42]; // slate-900
+      const secondaryColor = [100, 116, 139]; // slate-500
+      const lightBg = [248, 250, 252]; // slate-50
+      
+      // Header Section
+      doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.rect(0, 0, 210, 42, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(22);
+      doc.text('3D MAP JOURNEY SUMMARY', 15, 26);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      const dateStr = new Date().toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      doc.text(`Created on: ${dateStr}`, 145, 26);
+      
+      let y = 56;
+      doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('Journey Overview', 15, y);
+      
+      y += 8;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10.5);
+      doc.text(`This document compiles your custom travel sequence, containing ${this.bookmarks.length} meticulously captured viewpoints. Each bookmark records precise coordinates, camera orientation variables, and panoramic fields of view.`, 15, y, { maxWidth: 180 });
+      
+      y += 18;
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(15, y, 195, y);
+      y += 10;
+      
+      // Display chronological bookmarks list
+      const sortedList = [...this.bookmarks].reverse();
+      
+      sortedList.forEach((b, idx) => {
+        if (y > 235) {
+          doc.addPage();
+          y = 20;
+        }
+        
+        doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+        doc.roundedRect(15, y, 180, 46, 2, 2, 'F');
+        
+        doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.rect(15, y, 2.5, 46, 'F');
+        
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        const category = this.getBookmarkCategory(b.name);
+        const emoji = this.getCategoryEmoji(category);
+        doc.text(`${idx + 1}. ${emoji} ${b.name || 'Captured Viewpoint'}`, 22, y + 8);
+        
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(8.5);
+        doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+        doc.text(`Category: ${category}`, 22, y + 14);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9.5);
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        
+        // Coordinates (Left)
+        doc.text(`Latitude:  ${b.lat.toFixed(6)}°`, 22, y + 24);
+        doc.text(`Longitude: ${b.lng.toFixed(6)}°`, 22, y + 30);
+        doc.text(`Elevation:  Surface Level`, 22, y + 36);
+        
+        // Camera (Right)
+        doc.text(`Camera Tilt:    ${b.tilt.toFixed(1)}°`, 105, y + 24);
+        doc.text(`Camera Heading: ${b.heading.toFixed(1)}°`, 105, y + 30);
+        doc.text(`Range/Radius:   ${Math.round(b.range)}m`, 105, y + 36);
+        
+        y += 52;
+      });
+      
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setDrawColor(226, 232, 240);
+      doc.line(15, y, 195, y);
+      y += 8;
+      
+      doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(9);
+      doc.text('Crafted and generated in real-time by the Photorealistic 3D Maps Explorer Assistant.', 15, y);
+      
+      doc.save('My_3D_Map_Journey.pdf');
+    } catch (e) {
+      console.error('Failed to generate PDF:', e);
+      alert('Could not download PDF. Check console for error details.');
+    }
+  }
+
   onFlyEasingChange(e: Event) {
-    const val = (e.target as HTMLSelectElement).value as 'sine' | 'cubic' | 'quintic' | 'linear';
+    const val = (e.target as HTMLSelectElement).value as 'sine' | 'cubic' | 'quintic' | 'linear' | 'cinematic';
     this.flyEasing = val;
     try {
       localStorage.setItem('gdm_map_fly_easing', val);
@@ -4354,6 +4543,8 @@ The high-resolution PNG file has been downloaded to your system!`;
           style="height: 100%; width: 100%;"
           aria-label="Google Photorealistic 3D Map Display"
           internal-usage-attribution-ids="gmp_aistudio_threedmapjsmcp_v0.1_showcase"
+          ?default-labels-disabled=${!this.labelsEnabled}
+          ?default-buildings-disabled=${!this.buildingsEnabled}
           role="application">
         </gmp-map-3d>
         ${this.renderWeatherCard()}
@@ -4615,6 +4806,37 @@ The high-resolution PNG file has been downloaded to your system!`;
               </div>
             </div>
 
+            <!-- Map Feature Toggles Section -->
+            <div class="settings-section">
+              <h4 class="section-label">🗺️ Map Visual Features</h4>
+              <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                <div class="checkbox-container">
+                  <input 
+                    type="checkbox" 
+                    id="toggleTerrain"
+                    ?checked=${this.terrainEnabled}
+                    @change=${this.toggleTerrain} />
+                  <label for="toggleTerrain">🏔️ Show Terrain & Elevation</label>
+                </div>
+                <div class="checkbox-container">
+                  <input 
+                    type="checkbox" 
+                    id="toggleLabels"
+                    ?checked=${this.labelsEnabled}
+                    @change=${this.toggleLabels} />
+                  <label for="toggleLabels">🏷️ Show Location Labels</label>
+                </div>
+                <div class="checkbox-container">
+                  <input 
+                    type="checkbox" 
+                    id="toggleBuildings"
+                    ?checked=${this.buildingsEnabled}
+                    @change=${this.toggleBuildings} />
+                  <label for="toggleBuildings">🏢 Show 3D Buildings</label>
+                </div>
+              </div>
+            </div>
+
             <!-- Flight Animation Speed -->
             <div class="settings-section">
               <div class="slider-header">
@@ -4644,6 +4866,7 @@ The high-resolution PNG file has been downloaded to your system!`;
                 <option value="sine">🌊 Ease In Out (Sine - Organic)</option>
                 <option value="cubic">🚀 Ease In Out (Cubic - Dynamic)</option>
                 <option value="quintic">☄️ Ease In Out (Quintic - Cinematic)</option>
+                <option value="cinematic">🎥 Cinematic (Drone Operator Smooth)</option>
                 <option value="linear">📏 Linear (Mechanical)</option>
               </select>
 
@@ -4753,6 +4976,15 @@ The high-resolution PNG file has been downloaded to your system!`;
                     @click=${this.saveCurrentAsBookmark}
                     style="flex-shrink: 0;">
                     ${this.bookmarkIsSaving ? 'Saving...' : 'Save View'}
+                  </button>
+                </div>
+                <div style="margin-top: 8px; display: flex;">
+                  <button 
+                    class="settings-button outline" 
+                    @click=${this.downloadJourneyPDF}
+                    style="flex: 1; text-align: center; justify-content: center; font-size: 0.72rem; padding: 6px 10px; height: auto;"
+                    ?disabled=${this.bookmarks.length === 0}>
+                    📥 Download Journey (PDF)
                   </button>
                 </div>
               </div>

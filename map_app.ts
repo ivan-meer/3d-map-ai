@@ -3999,8 +3999,98 @@ To add your Google Maps API key:
     this.orbitAnimationId = requestAnimationFrame(() => this._runOrbit());
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('keydown', this.handleGlobalKeyDown);
+  }
+
+  private handleGlobalKeyDown = (e: KeyboardEvent) => {
+    // Ignore keys if the user is typing in form controls
+    const activeEl = document.activeElement;
+    if (activeEl) {
+      const tagName = activeEl.tagName.toLowerCase();
+      const isEditable = activeEl.hasAttribute('contenteditable') && activeEl.getAttribute('contenteditable') !== 'false';
+      if (
+        tagName === 'input' || 
+        tagName === 'textarea' || 
+        tagName === 'select' || 
+        isEditable
+      ) {
+        return;
+      }
+    }
+
+    if (!this.mapInitialized || !this.map) {
+      return;
+    }
+
+    switch (e.key) {
+      case ' ': { // Space bar
+        e.preventDefault();
+        if (this.isTourActive) {
+          this.stopTour();
+          this.addMessage('assistant', '⏸️ Tour paused via keyboard shortcut (Space).');
+        } else {
+          const list = this.getTourBookmarks();
+          if (list.length > 0) {
+            this.startTour();
+            this.addMessage('assistant', '▶️ Starting auto-tour via keyboard shortcut (Space).');
+          } else {
+            this.addMessage('assistant', "⚠️ You don't have any saved bookmarks to tour. Add some first!");
+          }
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        e.preventDefault();
+        let nextHeading = (this.map.heading || 0) - 5;
+        if (nextHeading < 0) nextHeading += 360;
+        this.mapHeading = Math.round(nextHeading);
+        this.map.heading = nextHeading;
+        break;
+      }
+      case 'ArrowRight': {
+        e.preventDefault();
+        let nextHeading = (this.map.heading || 0) + 5;
+        if (nextHeading >= 360) nextHeading -= 360;
+        this.mapHeading = Math.round(nextHeading);
+        this.map.heading = nextHeading;
+        break;
+      }
+      case 'ArrowUp': {
+        e.preventDefault();
+        let nextTilt = (this.map.tilt || 0) + 5;
+        if (nextTilt > 90) nextTilt = 90;
+        this.mapTilt = Math.round(nextTilt);
+        this.map.tilt = nextTilt;
+        break;
+      }
+      case 'ArrowDown': {
+        e.preventDefault();
+        let nextTilt = (this.map.tilt || 0) - 5;
+        if (nextTilt < 0) nextTilt = 0;
+        this.mapTilt = Math.round(nextTilt);
+        this.map.tilt = nextTilt;
+        break;
+      }
+      case '+':
+      case '=': {
+        e.preventDefault();
+        this.zoomIn();
+        break;
+      }
+      case '-':
+      case '_': {
+        e.preventDefault();
+        this.zoomOut();
+        break;
+      }
+    }
+  };
+
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener('keydown', this.handleGlobalKeyDown);
     if (this.orbitAnimationId !== undefined) {
       cancelAnimationFrame(this.orbitAnimationId);
     }
@@ -4698,6 +4788,34 @@ The high-resolution PNG file has been downloaded to your system!`;
           })}>
           <div class="settings-container">
             <h3 class="settings-title">Interactive Map Tools</h3>
+
+            <!-- Keyboard Shortcuts Legend -->
+            <div class="settings-section" style="background: var(--color-bg2); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+              <h4 class="section-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 0.82rem;">
+                ⌨️ Keyboard Shortcuts
+              </h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.72rem;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">Space</kbd>
+                  <span style="color: var(--color-text2);">Play/Pause Tour</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 4px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">←</kbd>
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 4px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">→</kbd>
+                  <span style="color: var(--color-text2);">Rotate Left/Right</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 4px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">↑</kbd>
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 4px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">↓</kbd>
+                  <span style="color: var(--color-text2);">Tilt Up/Down</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">+</kbd>
+                  <kbd style="background: var(--color-bg3); border: 1px solid var(--color-sidebar-border); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-weight: bold; box-shadow: 0 1px 1px rgba(0,0,0,0.15);">-</kbd>
+                  <span style="color: var(--color-text2);">Zoom In/Out</span>
+                </div>
+              </div>
+            </div>
 
             <!-- Search & Flying Tools Section -->
             <div class="settings-section">

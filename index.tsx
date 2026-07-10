@@ -18,7 +18,7 @@ import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 import {ChatState, MapApp, marked} from './map_app'; // Updated import path
 
-import {startMcpGoogleMapServer} from './mcp_maps_server';
+import {startMcpGoogleMapServer, MapParams} from './mcp_maps_server';
 
 /* --------- */
 
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', async (event) => {
 
   void startMcpGoogleMapServer(
     transportA,
-    (params: {location?: string; origin?: string; destination?: string}) => {
+    (params: MapParams) => {
       mapApp.handleMapQuery(params);
     },
   );
@@ -120,40 +120,10 @@ document.addEventListener('DOMContentLoaded', async (event) => {
         while (true) {
           // Inner try for AI interaction and message parsing
           const stream = await aiChat.sendMessageStream(currentInput);
-          let functionCallsToExecute: any[] = [];
 
           for await (const chunk of stream) {
             for (const candidate of chunk.candidates ?? []) {
               for (const part of candidate.content?.parts ?? []) {
-                if (part.functionCall) {
-                  console.log(
-                    'FUNCTION CALL:',
-                    part.functionCall.name,
-                    part.functionCall.args,
-                  );
-                  functionCallsToExecute.push(part.functionCall);
-
-                  const normalizedName = part.functionCall.name!
-                    .replace(/([a-z])([A-Z])/g, '$1_$2')
-                    .replace(/-/g, '_')
-                    .toLowerCase();
-
-                  const mcpCall = {
-                    name: normalizedName,
-                    arguments: part.functionCall.args,
-                  };
-
-                  const explanation =
-                    'Calling function:\n```json\n' +
-                    JSON.stringify(mcpCall, null, 2) +
-                    '\n```';
-                  const {textElement: functionCallText} = mapApp.addMessage(
-                    'assistant',
-                    '',
-                  );
-                  functionCallText.innerHTML = await marked.parse(explanation);
-                }
-
                 if (part.thought) {
                   mapApp.setChatState(ChatState.THINKING);
                   thoughtAccumulator += ' ' + part.thought;
@@ -173,8 +143,52 @@ document.addEventListener('DOMContentLoaded', async (event) => {
             }
           }
 
+          // Retrieve the fully assembled and parsed function calls from the chat history
+          const history = aiChat.getHistory();
+          const lastMessage = history[history.length - 1];
+          const functionCallsToExecute = [];
+          if (
+            lastMessage &&
+            (lastMessage.role === 'model' || lastMessage.role === 'assistant') &&
+            lastMessage.parts
+          ) {
+            for (const part of lastMessage.parts) {
+              if (part.functionCall) {
+                console.log(
+                  'COMPLETED FUNCTION CALL:',
+                  part.functionCall.name,
+                  part.functionCall.args,
+                );
+                functionCallsToExecute.push(part.functionCall);
+              }
+            }
+          }
+
           if (functionCallsToExecute.length === 0) {
             break; // No more function calls, exit the loop
+          }
+
+          // Add visual logs of function calls that are about to execute
+          for (const fc of functionCallsToExecute) {
+            const normalizedName = fc.name
+              .replace(/([a-z])([A-Z])/g, '$1_$2')
+              .replace(/-/g, '_')
+              .toLowerCase();
+
+            const mcpCall = {
+              name: normalizedName,
+              arguments: fc.args,
+            };
+
+            const explanation =
+              'Calling function:\n```json\n' +
+              JSON.stringify(mcpCall, null, 2) +
+              '\n```';
+            const {textElement: functionCallText} = mapApp.addMessage(
+              'assistant',
+              '',
+            );
+            functionCallText.innerHTML = await marked.parse(explanation);
           }
 
           // Execute function calls
@@ -200,6 +214,7 @@ document.addEventListener('DOMContentLoaded', async (event) => {
                 functionResponse: {
                   name: fc.name,
                   response: toolResult,
+                  id: fc.id,
                 },
               });
             } catch (err) {
@@ -209,6 +224,7 @@ document.addEventListener('DOMContentLoaded', async (event) => {
                 functionResponse: {
                   name: fc.name,
                   response: { error: String(err) },
+                  id: fc.id,
                 },
               });
             }

@@ -49,8 +49,8 @@ Tool Usage Guidelines:
 // Client-side fetch interceptor to guarantee SSE streams always end with a double newline (\n\n).
 // This prevents the SDK from throwing "Incomplete JSON segment at the end" when proxies (like Vite or Nginx)
 // buffer or strip trailing whitespace/newlines from SSE responses.
-const originalFetch = window.fetch;
-window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+const originalFetch = window.fetch || globalThis.fetch;
+const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   const url =
     typeof input === 'string'
       ? input
@@ -110,6 +110,27 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   return originalFetch(input, init);
 };
 
+try {
+  Object.defineProperty(window, 'fetch', {
+    value: customFetch,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+} catch (e) {
+  console.warn('[Fetch Interceptor] Could not define fetch on window, trying globalThis:', e);
+  try {
+    Object.defineProperty(globalThis, 'fetch', {
+      value: customFetch,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  } catch (err2) {
+    console.error('[Fetch Interceptor] Failed to intercept fetch on both window and globalThis:', err2);
+  }
+}
+
 const ai = new GoogleGenAI({
   apiKey: 'PROXY_MODE', // Keep as dummy string, actual key appended securely on server/proxy
   httpOptions: {
@@ -125,6 +146,61 @@ function createAiChat(mcpClient: Client) {
       tools: [mcpToTool(mcpClient)],
     },
   });
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (!err) return 'Unknown error occurred.';
+  
+  let baseErrorText = '';
+  if (err instanceof Error) {
+    baseErrorText = err.message;
+  } else if (typeof err === 'string') {
+    baseErrorText = err;
+  } else if (
+    err &&
+    typeof err === 'object' &&
+    'message' in err &&
+    typeof (err as {message: unknown}).message === 'string'
+  ) {
+    baseErrorText = (err as {message: string}).message;
+  } else {
+    try {
+      baseErrorText = JSON.stringify(err);
+    } catch {
+      baseErrorText = String(err);
+    }
+  }
+
+  // Helper to parse nested stringified JSON error messages recursively (up to 5 levels)
+  let currentStr = baseErrorText;
+  for (let depth = 0; depth < 5; depth++) {
+    const jsonStartIndex = currentStr.indexOf('{');
+    const jsonEndIndex = currentStr.lastIndexOf('}');
+    if (jsonStartIndex > -1 && jsonEndIndex > jsonStartIndex) {
+      const potentialJson = currentStr.substring(jsonStartIndex, jsonEndIndex + 1);
+      try {
+        const parsed = JSON.parse(potentialJson);
+        if (parsed && typeof parsed === 'object') {
+          if (
+            parsed.error &&
+            typeof parsed.error === 'object' &&
+            typeof parsed.error.message === 'string'
+          ) {
+            currentStr = parsed.error.message;
+            continue;
+          } else if (typeof parsed.message === 'string') {
+            currentStr = parsed.message;
+            continue;
+          }
+        }
+      } catch {
+        // Stop going deeper if JSON parse fails
+        break;
+      }
+    }
+    break;
+  }
+  return currentStr;
 }
 
 function camelCaseToDash(str: string): string {
@@ -300,78 +376,31 @@ document.addEventListener('DOMContentLoaded', async (event) => {
       } catch (e: unknown) {
         // Catch for AI interaction errors.
         console.error('GenAI SDK Error:', e);
-        let baseErrorText: string;
+        const finalErrorMessage = extractErrorMessage(e);
 
-        if (e instanceof Error) {
-          baseErrorText = e.message;
-        } else if (typeof e === 'string') {
-          baseErrorText = e;
-        } else if (
-          e &&
-          typeof e === 'object' &&
-          'message' in e &&
-          typeof (e as {message: unknown}).message === 'string'
-        ) {
-          baseErrorText = (e as {message: string}).message;
-        } else {
-          try {
-            // Attempt to stringify complex objects, otherwise, simple String conversion.
-            baseErrorText = `Unexpected error: ${JSON.stringify(e)}`;
-          } catch (stringifyError) {
-            baseErrorText = `Unexpected error: ${String(e)}`;
-          }
-        }
-
-        let finalErrorMessage = baseErrorText; // Start with the extracted/formatted base error message.
-
-        // Attempt to parse a JSON object from the baseErrorText, as some SDK errors embed details this way.
-        // This is useful if baseErrorText itself is a string containing JSON.
-        const jsonStartIndex = baseErrorText.indexOf('{');
-        const jsonEndIndex = baseErrorText.lastIndexOf('}');
-
-        if (jsonStartIndex > -1 && jsonEndIndex > jsonStartIndex) {
-          const potentialJson = baseErrorText.substring(
-            jsonStartIndex,
-            jsonEndIndex + 1,
-          );
-          try {
-            const sdkError = JSON.parse(potentialJson);
-            let refinedMessageFromSdkJson: string | undefined;
-
-            // Check for common nested error structures (e.g., sdkError.error.message)
-            // or a direct message (sdkError.message) in the parsed JSON.
-            if (
-              sdkError &&
-              typeof sdkError === 'object' &&
-              sdkError.error && // Check if 'error' property exists and is truthy
-              typeof sdkError.error === 'object' && // Check if 'error' property is an object
-              typeof sdkError.error.message === 'string' // Check for 'message' string within 'error' object
-            ) {
-              refinedMessageFromSdkJson = sdkError.error.message;
-            } else if (
-              sdkError &&
-              typeof sdkError === 'object' && // Check if sdkError itself is an object
-              typeof sdkError.message === 'string' // Check for a direct 'message' string on sdkError
-            ) {
-              refinedMessageFromSdkJson = sdkError.message;
-            }
-
-            if (refinedMessageFromSdkJson) {
-              finalErrorMessage = refinedMessageFromSdkJson; // Update if JSON parsing yielded a more specific message
-            }
-          } catch (parseError) {
-            // If parsing fails, finalErrorMessage remains baseErrorText.
-            console.warn(
-              'Could not parse potential JSON from error message; using base error text.',
-              parseError,
-            );
-          }
-        }
+        const isQuotaError =
+          finalErrorMessage.toLowerCase().includes('quota') ||
+          finalErrorMessage.toLowerCase().includes('limit') ||
+          finalErrorMessage.toLowerCase().includes('resource_exhausted') ||
+          finalErrorMessage.includes('429');
 
         const {textElement: errorTextElement} = mapApp.addMessage('error', '');
-        errorTextElement.innerHTML = await marked.parse(
-          `Error: ${finalErrorMessage}`,
-        );
+        
+        if (isQuotaError) {
+          errorTextElement.innerHTML = await marked.parse(
+            `### ⚠️ Gemini API Quota Exceeded\n\n` +
+            `The shared Gemini API key has exceeded its daily free-tier limit of **20 requests**.\n\n` +
+            `To get a fresh, dedicated quota and continue immediately, you can easily use your own **Gemini API Key**:\n\n` +
+            `1. **Get a free key:** Go to [Google AI Studio](https://aistudio.google.com/) and click **Get API Key**.\n` +
+            `2. **Open Settings:** Click the **Settings** (⚙️ gear icon, top-right corner of this screen) → **Secrets**.\n` +
+            `3. **Add Secret:** Add a secret named \`GEMINI_API_KEY\` and paste your key, then press **Enter**.\n\n` +
+            `*The application will automatically rebuild and connect to your own key.*`
+          );
+        } else {
+          errorTextElement.innerHTML = await marked.parse(
+            `Error: ${finalErrorMessage}`,
+          );
+        }
       }
 
       // Post-processing logic (now inside the outer try)

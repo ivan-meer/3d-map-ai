@@ -616,6 +616,8 @@ export class MapApp extends LitElement {
   @state() recentSearches: string[] = [];
   @state() mcpLogs: Array<{ id: string, timestamp: number, name: string, args: any, success: boolean }> = [];
   @state() isCapturing = false;
+  @state() isRulerActive = false;
+  @state() rulerPoints: Array<{lat: number; lng: number; altitude?: number}> = [];
 
   addMcpLog(name: string, args: any, success = true) {
     const log = {
@@ -651,6 +653,10 @@ export class MapApp extends LitElement {
   // Google Maps: Markers for origin and destination of a route.
   private originMarker?: any;
   private destinationMarker?: any;
+
+  private rulerMarker1?: any;
+  private rulerMarker2?: any;
+  private rulerPolyline?: any;
 
   sendMessageHandler?: CallableFunction;
 
@@ -926,6 +932,10 @@ To add your Google Maps API key:
       this.resetAutoSaveTimer();
     });
 
+    this.map.addEventListener('gmp-click', (event: any) => {
+      this.handleMapClick(event);
+    });
+
     const sharedJourneyParam = params.get('sharedJourney');
     if (sharedJourneyParam) {
       try {
@@ -946,6 +956,142 @@ To add your Google Maps API key:
 
   setChatState(state: ChatState) {
     this.chatState = state;
+  }
+
+  toggleRulerTool() {
+    this.isRulerActive = !this.isRulerActive;
+    if (!this.isRulerActive) {
+      this._clearRulerElements();
+    }
+  }
+
+  private _clearRulerElements() {
+    if (this.rulerMarker1) {
+      try { this.rulerMarker1.remove(); } catch (e) {}
+      this.rulerMarker1 = undefined;
+    }
+    if (this.rulerMarker2) {
+      try { this.rulerMarker2.remove(); } catch (e) {}
+      this.rulerMarker2 = undefined;
+    }
+    if (this.rulerPolyline) {
+      try { this.rulerPolyline.remove(); } catch (e) {}
+      this.rulerPolyline = undefined;
+    }
+    this.rulerPoints = [];
+  }
+
+  private handleMapClick(event: any) {
+    if (!this.isRulerActive) {
+      return;
+    }
+
+    if (!event || !event.position) {
+      console.warn('gmp-click event did not contain a valid position property.');
+      return;
+    }
+
+    const pos = event.position;
+    const lat = typeof pos.lat === 'function' ? pos.lat() : pos.lat;
+    const lng = typeof pos.lng === 'function' ? pos.lng() : pos.lng;
+
+    if (lat === undefined || lng === undefined || isNaN(lat) || isNaN(lng)) {
+      console.warn('gmp-click event position has invalid coordinates.');
+      return;
+    }
+
+    const clickedPoint = { lat, lng, altitude: 0 };
+
+    if (this.rulerPoints.length >= 2) {
+      this._clearRulerElements();
+    }
+
+    this.rulerPoints = [...this.rulerPoints, clickedPoint];
+
+    if (this.rulerPoints.length === 1) {
+      if (this.Marker3DElement) {
+        this.rulerMarker1 = new this.Marker3DElement();
+        this.rulerMarker1.position = clickedPoint;
+        this.rulerMarker1.label = 'Start (Point A)';
+        (this.map as any).appendChild(this.rulerMarker1);
+      }
+    } else if (this.rulerPoints.length === 2) {
+      if (this.Marker3DElement) {
+        this.rulerMarker2 = new this.Marker3DElement();
+        this.rulerMarker2.position = clickedPoint;
+        this.rulerMarker2.label = 'End (Point B)';
+        (this.map as any).appendChild(this.rulerMarker2);
+      }
+
+      if (this.Polyline3DElement) {
+        this.rulerPolyline = new this.Polyline3DElement();
+        const path = [this.rulerPoints[0], this.rulerPoints[1]];
+        try {
+          this.rulerPolyline.path = path;
+        } catch (e) {
+          // Fallback if needed
+        }
+        try {
+          this.rulerPolyline.coordinates = path;
+        } catch (e) {
+          // Fallback if needed
+        }
+        this.rulerPolyline.strokeColor = '#f59e0b'; // Amber 500
+        this.rulerPolyline.strokeWidth = 6;
+        (this.map as any).appendChild(this.rulerPolyline);
+      }
+    }
+
+    this.requestUpdate();
+  }
+
+  private calculateHaversineDistance(
+    lat1: number,
+    lng1: number,
+    lat2: number,
+    lng2: number
+  ): number {
+    const R = 6371000; // Earth's radius in meters
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+    const deltaLambda = ((lng2 - lng1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+      Math.cos(phi1) *
+        Math.cos(phi2) *
+        Math.sin(deltaLambda / 2) *
+        Math.sin(deltaLambda / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+  }
+
+  private calculateDistance(): number {
+    if (this.rulerPoints.length < 2) {
+      return 0;
+    }
+    const p1 = this.rulerPoints[0];
+    const p2 = this.rulerPoints[1];
+    return this.calculateHaversineDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+  }
+
+  private formatDistance(meters: number): string {
+    if (meters < 1000) {
+      return `${Math.round(meters)} m`;
+    }
+    const km = meters / 1000;
+    return `${km.toFixed(2)} km`;
+  }
+
+  private formatDistanceImperial(meters: number): string {
+    const feet = meters * 3.28084;
+    if (feet < 5280) {
+      return `${Math.round(feet)} ft`;
+    }
+    const miles = feet / 5280;
+    return `${miles.toFixed(2)} mi`;
   }
 
   /**
@@ -970,6 +1116,7 @@ To add your Google Maps API key:
       this.destinationMarker.remove();
       this.destinationMarker = undefined;
     }
+    this._clearRulerElements();
   }
 
   private async renderFriendlyMapError(
@@ -4463,6 +4610,77 @@ The high-resolution PNG file has been downloaded to your system!`;
           </div>
         ` : ''}
 
+        <!-- Distance Ruler Panel -->
+        ${this.isRulerActive ? html`
+          <div class="map-hud-ruler-panel bg-slate-950/90 backdrop-blur-md border border-amber-500/30 text-slate-100 rounded-xl p-4 shadow-2xl flex flex-col gap-3 pointer-events-auto" style="
+            position: absolute;
+            top: ${this.cameraFlightActive ? '185px' : '60px'};
+            left: 20px;
+            z-index: 100;
+            width: 320px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+            transition: top 0.3s ease-in-out;
+          ">
+            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.1rem;">📏</span>
+                <span style="font-size: 0.8rem; font-weight: 700; color: #f8fafc; letter-spacing: 0.05em; text-transform: uppercase;">Distance Ruler</span>
+              </div>
+              <button 
+                style="font-size: 0.75rem; color: #cbd5e1; background: rgba(255, 255, 255, 0.1); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; transition: background 0.2s;"
+                @mouseenter=${(e: MouseEvent) => (e.target as HTMLElement).style.background = 'rgba(255, 255, 255, 0.2)'}
+                @mouseleave=${(e: MouseEvent) => (e.target as HTMLElement).style.background = 'rgba(255, 255, 255, 0.1)'}
+                @click=${this._clearRulerElements}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.8rem;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: ${this.rulerPoints.length > 0 ? '#10b981' : '#64748b'};"></span>
+                <span style="color: #cbd5e1; font-weight: 500;">Point A:</span>
+                <span style="font-family: monospace; color: #94a3b8; flex-grow: 1; text-align: right;">
+                  ${this.rulerPoints[0] 
+                    ? `${this.rulerPoints[0].lat.toFixed(5)}°, ${this.rulerPoints[0].lng.toFixed(5)}°` 
+                    : 'Click map to place'}
+                </span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: ${this.rulerPoints.length > 1 ? '#f59e0b' : '#64748b'};"></span>
+                <span style="color: #cbd5e1; font-weight: 500;">Point B:</span>
+                <span style="font-family: monospace; color: #94a3b8; flex-grow: 1; text-align: right;">
+                  ${this.rulerPoints[1] 
+                    ? `${this.rulerPoints[1].lat.toFixed(5)}°, ${this.rulerPoints[1].lng.toFixed(5)}°` 
+                    : (this.rulerPoints.length === 1 ? 'Click map to place' : 'Waiting...')}
+                </span>
+              </div>
+            </div>
+
+            ${this.rulerPoints.length === 2 ? html`
+              <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 2px; margin-top: 4px;">
+                <span style="font-size: 0.65rem; text-transform: uppercase; tracking-wider; color: #f59e0b; font-weight: 700;">Ground Distance</span>
+                <div style="display: flex; align-items: baseline; gap: 6px;">
+                  <span style="font-size: 1.3rem; font-weight: 800; color: #fbbf24; font-family: monospace;">
+                    ${this.formatDistance(this.calculateDistance())}
+                  </span>
+                  <span style="font-size: 0.8rem; color: #94a3b8; font-family: monospace;">
+                    (${this.formatDistanceImperial(this.calculateDistance())})
+                  </span>
+                </div>
+              </div>
+            ` : html`
+              <div style="background: rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 10px; text-align: center; margin-top: 4px;">
+                <span style="font-size: 0.75rem; color: #94a3b8; line-height: 1.4;">
+                  ${this.rulerPoints.length === 0 
+                    ? 'Click any location on the map to place the start point (Point A).' 
+                    : 'Click another location to place the end point (Point B) and see distance.'}
+                </span>
+              </div>
+            `}
+          </div>
+        ` : ''}
+
         <!-- Floating Controls Dock (centered right, independent) -->
         <div class="map-hud-controls-dock">
           <!-- Compass Reset Button -->
@@ -4488,6 +4706,17 @@ The high-resolution PNG file has been downloaded to your system!`;
               <path d="M120-160v-640h80v640h-80Zm240 0v-400h80v400h-80Zm240 0v-240h80v240h-80Zm240 0v-520h80v520h-80Z"/>
             </svg>
             <span class="tooltip">${tiltLabel}</span>
+          </button>
+
+          <!-- Distance Ruler Toggle -->
+          <button 
+            class="map-hud-btn ${this.isRulerActive ? 'active' : ''}" 
+            @click=${this.toggleRulerTool}
+            aria-label="Toggle Distance Ruler">
+            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
+              <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-720v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-80h-80v-40h80v-80h-160v-40h160v-80h-80v-40h80v-80h-160v-40h160v-80H200v560Z"/>
+            </svg>
+            <span class="tooltip">${this.isRulerActive ? 'Disable Ruler' : 'Measure Distance'}</span>
           </button>
 
           <!-- Orbit Spin Toggle -->

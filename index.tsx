@@ -44,7 +44,8 @@ Tool Usage Guidelines:
     *   **3D Camera Adjustments:** When asked to tilt the view, rotate the map, or zoom in/out (e.g., "Look from the horizon", "Point north-east", "Zoom closer"), use 'set_map_camera' with relevant parameters (tilt: 0-90, heading: 0-360, range in meters).
     *   **Bookmarks:** If a user loves a view or wants to save a location, use 'manage_bookmarks' with 'action: "add"' and a name, or list bookmarks with 'action: "list"'.
     *   **Auto-Tours:** When the user wants to take a tour of their saved landmarks, use 'manage_tour' with 'action: "play"'.
-4.  **Explain Actions and Add Fun Facts:** After initiating a map tool call, explain what you are displaying or adjusting, and share fascinating historical, scientific, or travel trivia about the destination.`;
+4.  **Explain Actions and Add Fun Facts:** After initiating a map tool call, explain what you are displaying or adjusting, and share fascinating historical, scientific, or travel trivia about the destination.
+5.  **ALWAYS NAVIGATE TO DISCUSSED LOCATIONS:** Whenever the user asks about, mentions, or requests information/fun facts about any specific place, island, country, city, landmark, or region (such as Hawaii, Grand Canyon, Eiffel Tower, etc.), you **MUST ALWAYS** first call the \`view_location_google_maps\` tool to transition the map camera there. Never just provide information or talk about a place without also flying the map camera to that location!`;
 
 // Client-side fetch interceptor to guarantee SSE streams always end with a double newline (\n\n).
 // This prevents the SDK from throwing "Incomplete JSON segment at the end" when proxies (like Vite or Nginx)

@@ -583,6 +583,7 @@ export class MapApp extends LitElement {
   @state() loadingPhotoBookmarkIds: Set<string> = new Set();
   @state() newBookmarkName = '';
   @state() bookmarkIsSaving = false;
+  @state() coordinatesCopied = false;
   @state() appTheme: 'light' | 'dark' = 'dark';
   @state() showPoiMarkers = false;
   @state() poiLoading = false;
@@ -2225,6 +2226,106 @@ To add your Google Maps API key:
     return `${range} m`;
   }
 
+  getScaleDetails() {
+    const range = this.mapRange; // in meters
+    const containerWidth = this.shadowRoot?.querySelector('.main-container')?.clientWidth || window.innerWidth || 1000;
+    
+    // Approximate visible geographic width (meters) at center of 3D view:
+    // With standard horizontal field of view of ~45°, ground width ~ 0.83 * range.
+    const totalGroundWidth = range * 0.83; 
+    
+    // We want the scale bar to occupy a clean visual width, roughly between 80px and 140px.
+    // Target distance represented by a default 100px bar:
+    const targetDistance = totalGroundWidth * (100 / containerWidth);
+    
+    // Cartographically clean/round distances:
+    const roundDistances = [
+      1, 2, 5, 10, 20, 50, 100, 200, 500, 
+      1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 2000000, 5000000
+    ];
+    
+    // Find the closest round distance less than or equal to targetDistance
+    let bestDistance = roundDistances[0];
+    for (const dist of roundDistances) {
+      if (dist <= targetDistance) {
+        bestDistance = dist;
+      } else {
+        break;
+      }
+    }
+    
+    // Calculate precise pixel width for this round distance
+    let pixelWidth = Math.round((bestDistance / totalGroundWidth) * containerWidth);
+    
+    // Ensure pixelWidth stays within a beautifully balanced visual width (e.g. 50px to 150px)
+    if (pixelWidth < 50) {
+      const nextIdx = roundDistances.indexOf(bestDistance) + 1;
+      if (nextIdx < roundDistances.length) {
+        bestDistance = roundDistances[nextIdx];
+        pixelWidth = Math.round((bestDistance / totalGroundWidth) * containerWidth);
+      }
+    }
+    
+    if (pixelWidth > 150) {
+      const prevIdx = roundDistances.indexOf(bestDistance) - 1;
+      if (prevIdx >= 0) {
+        bestDistance = roundDistances[prevIdx];
+        pixelWidth = Math.round((bestDistance / totalGroundWidth) * containerWidth);
+      }
+    }
+
+    // Format the distance label clearly
+    const label = bestDistance >= 1000 
+      ? `${(bestDistance / 1000).toFixed(0)} km` 
+      : `${bestDistance} m`;
+      
+    return { label, pixelWidth };
+  }
+
+  renderMapScale() {
+    const scale = this.getScaleDetails();
+    return html`
+      <div 
+        class="map-scale-overlay" 
+        style="
+          display: flex; 
+          flex-direction: column; 
+          align-items: center; 
+          justify-content: center;
+          gap: 2px; 
+          padding: 6px 10px; 
+          background-color: light-dark(rgba(255, 255, 255, 0.85), rgba(15, 23, 42, 0.85)); 
+          backdrop-filter: blur(16px); 
+          -webkit-backdrop-filter: blur(16px);
+          border-radius: 12px; 
+          border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1)); 
+          pointer-events: auto; 
+          font-family: monospace; 
+          font-size: 10px; 
+          font-weight: bold;
+          color: var(--color-text); 
+          min-width: 70px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+          user-select: none;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        "
+        title="Map scale bar">
+        <span style="letter-spacing: 0.5px; text-shadow: 0 1px 1px rgba(0,0,0,0.1);">${scale.label}</span>
+        <div style="
+          position: relative; 
+          width: ${scale.pixelWidth}px; 
+          height: 6px; 
+          border-left: 2px solid var(--color-accent, #0284c7); 
+          border-right: 2px solid var(--color-accent, #0284c7); 
+          border-bottom: 2px solid var(--color-accent, #0284c7); 
+          margin-top: 1px;
+          box-sizing: border-box;
+          transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        "></div>
+      </div>
+    `;
+  }
+
   onHeadingInput(e: Event) {
     const val = Number((e.target as HTMLInputElement).value);
     this.mapHeading = val;
@@ -3006,7 +3107,7 @@ To add your Google Maps API key:
 
   setupMarkerHover(marker: any, pLat: number, pLng: number, baseColor = { r: 245, g: 158, b: 11 }) {
     // Set properties for relative altitude so we can lift/bounce the marker in 3D
-    marker.altitudeMode = 'relative-to-ground';
+    marker.altitudeMode = 'relativeToGround';
     marker.extruded = true; // Beautiful link connecting marker to ground
 
     const baseAlt = 15; // Set base floating height to 15m
@@ -4171,6 +4272,21 @@ To add your Google Maps API key:
       return;
     }
 
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+    if (isCtrlOrCmd) {
+      const keyLower = e.key.toLowerCase();
+      if (keyLower === 's') {
+        e.preventDefault();
+        this.captureScreenshot();
+        return;
+      }
+      if (keyLower === 'b') {
+        e.preventDefault();
+        this.saveCurrentAsBookmark();
+        return;
+      }
+    }
+
     switch (e.key) {
       case ' ': { // Space bar
         e.preventDefault();
@@ -4296,6 +4412,19 @@ To add your Google Maps API key:
     }
     
     return null;
+  }
+
+  async copyCoordinatesToClipboard() {
+    const latLngStr = `${this.centerLat.toFixed(6)}, ${this.centerLng.toFixed(6)}`;
+    try {
+      await navigator.clipboard.writeText(latLngStr);
+      this.coordinatesCopied = true;
+      setTimeout(() => {
+        this.coordinatesCopied = false;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy coordinates:', err);
+    }
   }
 
   async captureScreenshot() {
@@ -4792,7 +4921,7 @@ The high-resolution PNG file has been downloaded to your system!`;
         <div class="map-hud-bottom-group">
           <!-- Coordinates Row -->
           <div class="map-hud-bottom-row" style="display: flex; justify-content: flex-start; align-items: center; width: 100%; pointer-events: none;">
-            <div class="map-hud-bottom-left" style="display: flex; gap: 8px; pointer-events: auto;">
+            <div class="map-hud-bottom-left" style="display: flex; gap: 8px; pointer-events: auto; align-items: center;">
               <div class="map-hud-pill">
                 <span>🌐</span>
                 <span>
@@ -4804,6 +4933,15 @@ The high-resolution PNG file has been downloaded to your system!`;
                 <span>📏</span>
                 <span>Altitude: ${this.formatRange(this.mapRange)}</span>
               </div>
+              <button 
+                class="map-hud-pill cursor-pointer" 
+                @click=${this.copyCoordinatesToClipboard}
+                title="Copy current center coordinates to clipboard"
+                style="border-style: dashed; border-color: ${this.coordinatesCopied ? '#10b981' : 'var(--color-accent, #0284c7)'}; transition: all 0.2s ease;">
+                <span>${this.coordinatesCopied ? '✅' : '📋'}</span>
+                <span>${this.coordinatesCopied ? 'Copied!' : 'Copy Coordinates'}</span>
+              </button>
+              ${this.renderMapScale()}
             </div>
           </div>
 

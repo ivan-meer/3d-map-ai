@@ -4816,20 +4816,6 @@ The high-resolution PNG file has been downloaded to your system!`;
 
         <!-- Floating Controls Dock (centered right, independent) -->
         <div class="map-hud-controls-dock">
-          <!-- Compass Reset Button -->
-          <button 
-            class="map-hud-btn" 
-            @click=${this.onCompassReset}
-            aria-label="Reset Compass to North">
-            <div class="compass-icon-wrapper" style="transform: rotate(-${this.mapHeading}deg);">
-              <!-- Beautiful Compass Icon -->
-              <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-                <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q134 0 227 93t93 227q0 134-93 227t-227 93Zm0-80q100 0 170-70t70-170q0-100-70-170t-170-70q-100 0-170 70t-70 170q0 100 70 170t170 70Zm-40-160 80-120 80 120H440ZM480-800q-17 0-28.5-11.5T440-840q0-17 11.5-28.5T480-880q17 0 28.5 11.5T520-840q0 17-11.5 28.5T480-800ZM120-480q-17 0-28.5-11.5T80-520q0-17 11.5-28.5T120-560q17 0 28.5 11.5T160-520q0 17-11.5 28.5T120-480Zm640 0q-17 0-28.5-11.5T720-520q0-17 11.5-28.5T760-560q17 0 28.5 11.5T800-520q0 17-11.5 28.5T760-480Zm-280 40q-17 0-28.5-11.5T440-480q0-17 11.5-28.5T480-520q17 0 28.5 11.5T520-480q0 17-11.5 28.5T480-440Z"/>
-              </svg>
-            </div>
-            <span class="tooltip">Reset Compass (0°)</span>
-          </button>
-
           <!-- Reset to Bird's-Eye View Button -->
           <button 
             class="map-hud-btn" 
@@ -4872,50 +4858,6 @@ The high-resolution PNG file has been downloaded to your system!`;
               <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q134 0 227 93t93 227q0 134-93 227t-227 93Zm0-80q100 0 170-70t70-170q0-100-70-170t-170-70q-100 0-170 70t-70 170q0 100 70 170t170 70Zm0-120q-50 0-85-35t-35-85q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35Z"/>
             </svg>
             <span class="tooltip">${this.isOrbiting ? 'Stop Orbit Spin' : 'Orbit Target'}</span>
-          </button>
-
-          <!-- Zoom In -->
-          <button 
-            class="map-hud-btn" 
-            @click=${this.zoomIn}
-            aria-label="Zoom In">
-            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-              <path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/>
-            </svg>
-            <span class="tooltip">Zoom In</span>
-          </button>
-
-          <!-- Zoom Out -->
-          <button 
-            class="map-hud-btn" 
-            @click=${this.zoomOut}
-            aria-label="Zoom Out">
-            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-              <path d="M200-440v-80h560v80H200Z"/>
-            </svg>
-            <span class="tooltip">Zoom Out</span>
-          </button>
-
-          <!-- Toggle Live Weather Overlay -->
-          <button 
-            class="map-hud-btn ${this.showWeatherOverlay ? 'active' : ''}" 
-            @click=${this.toggleWeatherOverlay}
-            aria-label="Toggle Weather Overlay">
-            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-              <path d="M480-160q-133 0-226.5-93.5T160-480q0-104 57-185.5t153-111q11-17 28.5-27t38.5-13.5q-6 24-2 47.5t17 44.5L341-610q-37 17-60.5 50.5T257-480q0 93 65.5 158.5T481-256q42 0 79-15.5t65-42.5l57 57q-38 38-89.5 59.5T480-160Zm300-300q-58 0-99-41t-41-99q0-58 41-99t99-41q58 0 99 41t41 99q0 58-41 99t-99 41ZM581-540q-14-11-23.5-26.5T546-600l-51-16q-16 11-34.5 13.5T422-600l34-44q19 11 41 12.5t41-11.5l46 16q-5 18-3.5 35.5t12.5 31.5l-12 16ZM480-480Z"/>
-            </svg>
-            <span class="tooltip">${this.showWeatherOverlay ? 'Hide Weather' : 'Show Weather'}</span>
-          </button>
-
-          <!-- Toggle POI Overlay -->
-          <button 
-            class="map-hud-btn ${this.showPoiMarkers ? 'active' : ''}" 
-            @click=${this.togglePoiMarkers}
-            aria-label="Toggle POIs">
-            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
-              <path d="M480-480q33 0 56.5-23.5T560-560q0-33-23.5-56.5T480-640q-33 0-56.5 23.5T400-560q0 33 23.5 56.5T480-480Zm0 294q122-112 181-203.5T720-552q0-109-75.5-183.5T480-810q-109 0-184.5 74.5T220-552q0 71 59 162.5T480-186Zm0 106Q319-215 239.5-329.5T160-552q0-150 100.5-249T480-900q162 0 261 98.5T840-552q0 138-79.5 252.5T480-80Zm0-472Z"/>
-            </svg>
-            <span class="tooltip">${this.showPoiMarkers ? 'Hide Attractions' : 'Show Attractions'}</span>
           </button>
 
           <!-- Save High-Resolution Viewport Screenshot -->

@@ -4369,6 +4369,10 @@ To add your Google Maps API key:
     }
   }
 
+  resetToBirdsEye() {
+    this.flyTo(this.centerLat, this.centerLng, 0, 0, this.mapRange);
+  }
+
   toggleTiltMode() {
     const targetTilt = this.mapTilt === 0 ? 65 : 0;
     this.mapTilt = targetTilt;
@@ -4824,6 +4828,17 @@ The high-resolution PNG file has been downloaded to your system!`;
               </svg>
             </div>
             <span class="tooltip">Reset Compass (0°)</span>
+          </button>
+
+          <!-- Reset to Bird's-Eye View Button -->
+          <button 
+            class="map-hud-btn" 
+            @click=${this.resetToBirdsEye}
+            aria-label="Reset Map to Bird's-Eye View">
+            <svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor">
+              <path d="M480-120q-150 0-255-105T120-480q0-150 105-255T480-840q150 0 255 105t105 255q0 150-105 255T480-120Zm0-80q116 0 198-82t82-198q0-116-82-198t-198-82q-116 0-198 82t-82 198q0 116 82 198t198 82Zm0-120q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47Zm0-80q33 0 56.5-23.5T560-480q0-33-23.5-56.5T480-560q-33 0-56.5 23.5T400-480q0 33 23.5 56.5T480-400Z"/>
+            </svg>
+            <span class="tooltip">Bird's-Eye View</span>
           </button>
 
           <!-- 2D / 3D Perspective Toggle -->

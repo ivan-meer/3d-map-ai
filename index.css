@@ -1155,24 +1155,35 @@ code.hljs {
   flex-shrink: 0;
 }
 
-/* Weather Overlay Styles */
+/* Weather Overlay Styles - REDESIGNED COMPLETELY */
 .weather-overlay-card {
   position: absolute;
   top: 16px;
   right: 16px;
-  background-color: light-dark(rgba(255, 255, 255, 0.82), rgba(20, 20, 20, 0.85));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
-  border-radius: 14px;
-  padding: 16px;
-  width: 260px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  background: light-dark(rgba(255, 255, 255, 0.88), rgba(15, 23, 42, 0.82));
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.15));
+  border-top-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.25)); /* premium specular edge */
+  border-radius: 20px;
+  padding: 18px;
+  width: 280px;
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 10px 20px -3px rgba(0, 0, 0, 0.1),
+    0 25px 50px -12px rgba(0, 0, 0, 0.3);
   z-index: 999;
   font-family: inherit;
   color: var(--color-text);
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
+}
+
+.weather-overlay-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 10px 25px -5px rgba(0, 0, 0, 0.15),
+    0 35px 65px -10px rgba(0, 0, 0, 0.4);
 }
 
 .weather-loading {
@@ -2228,6 +2239,67 @@ code.hljs {
   pointer-events: auto;
 }
 
+.map-hud-pill-group .map-hud-pill {
+  animation: hud-pill-down-entrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.map-hud-pill-group .map-hud-pill:nth-child(1) {
+  animation-delay: 150ms;
+}
+
+.map-hud-pill-group .map-hud-pill:nth-child(2) {
+  animation-delay: 300ms;
+}
+
+.map-hud-bottom-left .map-hud-pill {
+  animation: hud-pill-up-entrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.map-hud-bottom-left .map-hud-pill:nth-child(1) {
+  animation-delay: 200ms;
+}
+
+.map-hud-bottom-left .map-hud-pill:nth-child(2) {
+  animation-delay: 350ms;
+}
+
+.map-hud-bottom-left .map-hud-pill:nth-child(3) {
+  animation-delay: 500ms;
+}
+
+.map-scale-overlay {
+  animation: hud-pill-up-entrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: 650ms;
+}
+
+.map-scale-overlay:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2) !important;
+  border-color: var(--color-accent, #0284c7) !important;
+}
+
+@keyframes hud-pill-down-entrance {
+  0% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hud-pill-up-entrance {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .map-hud-pill {
   background-color: light-dark(rgba(255, 255, 255, 0.85), rgba(15, 23, 42, 0.85));
   backdrop-filter: blur(16px);
@@ -2904,100 +2976,141 @@ code.hljs {
   animation: beaconPulse 1.5s infinite ease-in-out;
 }
 
-/* Custom POI Attraction Card Overlay Styles */
+/* Custom POI Attraction Card Overlay Styles - REDESIGNED COMPLETELY */
 .poi-details-overlay-card {
   position: absolute;
   bottom: 24px;
   left: 16px;
-  background-color: light-dark(rgba(255, 255, 255, 0.85), rgba(20, 20, 20, 0.88));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
-  border-radius: 16px;
-  padding: 18px;
-  width: 320px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  background: light-dark(rgba(255, 255, 255, 0.88), rgba(15, 23, 42, 0.85));
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.15));
+  border-top-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.25)); /* glass reflection line */
+  border-radius: 20px;
+  padding: 20px;
+  width: 340px;
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 20px 40px -4px rgba(0, 0, 0, 0.35);
   z-index: 1000;
   color: var(--color-text);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  gap: 12px;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: auto;
+  transform-origin: bottom left;
+  animation: poi-card-entrance 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes poi-card-entrance {
+  0% {
+    transform: translateY(30px) scale(0.9) rotate(-1deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+
+.poi-details-overlay-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 10px 20px -5px rgba(0, 0, 0, 0.15),
+    0 30px 60px -10px rgba(0, 0, 0, 0.45);
 }
 
 .poi-details-overlay-card .poi-close-btn {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  background: transparent;
-  border: none;
-  color: var(--color-text3);
+  top: 14px;
+  right: 14px;
+  background: light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.06));
+  border: 1px solid light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.08));
+  color: var(--color-text-secondary, #888);
   cursor: pointer;
-  padding: 4px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .poi-details-overlay-card .poi-close-btn:hover {
-  background-color: light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.08));
-  color: var(--color-text);
+  background-color: #ef4444 !important;
+  color: #fff !important;
+  border-color: #ef4444 !important;
+  transform: scale(1.1) rotate(90deg);
+}
+
+.poi-details-overlay-card .poi-close-btn:active {
+  transform: scale(0.9) rotate(90deg);
 }
 
 .poi-details-overlay-card .poi-header {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-right: 20px;
+  gap: 8px;
+  padding-right: 24px;
 }
 
 .poi-details-overlay-card .poi-tag {
   align-self: flex-start;
   font-size: 0.65rem;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 8px;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
   border-radius: 9999px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
 }
 
 .poi-details-overlay-card .poi-title {
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-size: 1.25rem;
+  font-weight: 800;
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.25;
   color: var(--color-text);
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .poi-details-overlay-card .poi-address {
-  font-size: 0.78rem;
-  line-height: 1.4;
+  font-size: 0.8rem;
+  line-height: 1.5;
   color: var(--color-text-secondary, #888);
   margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 .poi-details-overlay-card .poi-coordinates {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+  margin-top: 2px;
 }
 
 .poi-details-overlay-card .coordinate-badge {
-  font-size: 0.68rem;
-  background-color: light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.05));
+  font-size: 0.7rem;
+  font-weight: 600;
+  background-color: light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.04));
   border: 1px solid light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.08));
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-family: monospace;
+  color: var(--color-text3);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
 }
 
 .poi-details-overlay-card .poi-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 6px;
 }
 
 .poi-details-overlay-card .poi-action-btn {
@@ -3005,35 +3118,47 @@ code.hljs {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 8px 12px;
-  border-radius: 8px;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   border: none;
 }
 
 .poi-details-overlay-card .poi-action-btn.primary {
-  background-color: var(--color-accent, #f59e0b);
-  color: #000;
+  background-color: var(--color-accent, #0284c7);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3);
 }
 
 .poi-details-overlay-card .poi-action-btn.primary:hover {
-  background-color: var(--color-accent-hover, #d97706);
-  transform: translateY(-1px);
+  background-color: var(--color-accent-hover, #0369a1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(2, 132, 199, 0.45);
+}
+
+.poi-details-overlay-card .poi-action-btn.primary:active {
+  transform: translateY(0);
 }
 
 .poi-details-overlay-card .poi-action-btn.secondary {
-  background-color: light-dark(rgba(0,0,0,0.05), rgba(255,255,255,0.08));
+  background-color: light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.05));
   color: var(--color-text);
   border: 1px solid light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.1));
 }
 
 .poi-details-overlay-card .poi-action-btn.secondary:hover {
-  background-color: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.12));
-  transform: translateY(-1px);
+  background-color: light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.1));
+  border-color: var(--color-accent, #0284c7);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.poi-details-overlay-card .poi-action-btn.secondary:active {
+  transform: translateY(0);
 }
 
 .poi-details-overlay-card .poi-action-btn:disabled {
@@ -3092,6 +3217,112 @@ code.hljs {
     opacity: 1;
     transform: translateY(-50%) translateX(0);
   }
+}
+
+/* Styling Google Maps Native 3D Popover card components to perfectly match our theme */
+gmp-popover,
+.gmp-popover,
+[id="mapContainer"] gmp-popover,
+div#mapContainer gmp-popover {
+  background-color: light-dark(rgba(255, 255, 255, 0.92), rgba(15, 23, 42, 0.9)) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border-radius: 20px !important;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.15)) !important;
+  border-top-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.25)) !important;
+  box-shadow: 
+    0 10px 30px -5px rgba(0, 0, 0, 0.2),
+    0 25px 60px -15px rgba(0, 0, 0, 0.4) !important;
+  color: var(--color-text) !important;
+  padding: 16px !important;
+  font-family: inherit !important;
+  animation: poi-card-entrance 0.4s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+/* Customize details of compact place web components inside maps popovers */
+gmp-internal-use-place-details-compact,
+.gmp-internal-use-place-details-compact,
+gmp-popover gmp-internal-use-place-details-compact {
+  background: transparent !important;
+  color: var(--color-text) !important;
+  font-family: inherit !important;
+}
+
+gmp-internal-use-place-details-compact::part(title) {
+  font-weight: 800 !important;
+  font-size: 1.15rem !important;
+  color: var(--color-text) !important;
+  letter-spacing: -0.01em !important;
+}
+
+gmp-internal-use-place-details-compact::part(address),
+gmp-internal-use-place-details-compact::part(phone) {
+  color: var(--color-text-secondary, #888) !important;
+  font-size: 0.8rem !important;
+}
+
+/* Beautiful custom markers glow/pulse and hover state highlights */
+gmp-marker-3d,
+gmp-marker-3d-interactive {
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35)) !important;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* Weather-specific card atmospheric soft glow borders */
+.weather-overlay-card.weather-clear {
+  border-color: light-dark(rgba(245, 158, 11, 0.3), rgba(245, 158, 11, 0.4)) !important;
+  box-shadow: 
+    0 4px 6px -1px rgba(245, 158, 11, 0.05),
+    0 10px 20px -3px rgba(245, 158, 11, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.weather-overlay-card.weather-rainy {
+  border-color: light-dark(rgba(2, 132, 199, 0.3), rgba(2, 132, 199, 0.4)) !important;
+  box-shadow: 
+    0 4px 6px -1px rgba(2, 132, 199, 0.05),
+    0 10px 20px -3px rgba(2, 132, 199, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.weather-overlay-card.weather-snowy {
+  border-color: light-dark(rgba(56, 189, 248, 0.25), rgba(56, 189, 248, 0.35)) !important;
+  box-shadow: 
+    0 4px 6px -1px rgba(56, 189, 248, 0.05),
+    0 10px 20px -3px rgba(56, 189, 248, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.weather-overlay-card.weather-stormy {
+  border-color: light-dark(rgba(139, 92, 246, 0.3), rgba(139, 92, 246, 0.4)) !important;
+  box-shadow: 
+    0 4px 6px -1px rgba(139, 92, 246, 0.05),
+    0 10px 20px -3px rgba(139, 92, 246, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Beautiful weather stats bento-grid cells design */
+.weather-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+  border-top: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1)) !important;
+  padding-top: 14px !important;
+  margin-top: 10px !important;
+}
+
+.weather-stat-item {
+  background-color: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04)) !important;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.08)) !important;
+  border-radius: 12px !important;
+  padding: 8px 10px !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.weather-stat-item:hover {
+  background-color: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08)) !important;
+  border-color: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.15)) !important;
+  transform: translateY(-1px) !important;
 }
 
 

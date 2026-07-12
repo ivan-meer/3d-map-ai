@@ -376,7 +376,6 @@ document.addEventListener('DOMContentLoaded', async (event) => {
         }
       } catch (e: unknown) {
         // Catch for AI interaction errors.
-        console.error('GenAI SDK Error:', e);
         const finalErrorMessage = extractErrorMessage(e);
 
         const isQuotaError =
@@ -384,6 +383,12 @@ document.addEventListener('DOMContentLoaded', async (event) => {
           finalErrorMessage.toLowerCase().includes('limit') ||
           finalErrorMessage.toLowerCase().includes('resource_exhausted') ||
           finalErrorMessage.includes('429');
+
+        if (isQuotaError) {
+          console.warn('GenAI API Quota Info:', finalErrorMessage);
+        } else {
+          console.error('GenAI SDK Error:', e);
+        }
 
         const {textElement: errorTextElement} = mapApp.addMessage('error', '');
         
